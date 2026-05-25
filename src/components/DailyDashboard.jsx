@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { LayoutDashboard } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { dashboardCache } from '../utils/dashboardCache';
 import { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard } from './DashboardModals';
 import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
@@ -35,6 +36,11 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     fetchPricing();
   }, []);
 
+  // Bust cache when a sync completes so the fresh data is loaded
+  useEffect(() => {
+    if (store?.id && refreshTrigger) dashboardCache.bust(store.id);
+  }, [refreshTrigger, store?.id]);
+
   useEffect(() => {
     if (store?.id) fetchData();
   }, [store?.id, feedStart, feedEnd, scoreStart, scoreEnd, refreshTrigger]);
@@ -57,10 +63,23 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       const minISO = new Date(minD + 'T00:00:00+05:30').toISOString();
       const maxISO = new Date(maxD + 'T23:59:59+05:30').toISOString();
 
+      // Serve from cache when available — avoids re-fetching on tab switches
+      const ordersCacheKey = `${store.id}_orders_${minD}_${maxD}`;
+      const adCacheKey = `${store.id}_adcosts_${minD}_${maxD}`;
+      const cachedOrders = dashboardCache.get(ordersCacheKey);
+      const cachedAds = dashboardCache.get(adCacheKey);
+
+      if (cachedOrders && cachedAds) {
+        setOrders(cachedOrders);
+        setAdCosts(cachedAds);
+        setLoading(false);
+        return;
+      }
+
       let allOrders = [], from = 0, step = 1000, hasMore = true;
       while (hasMore) {
         const { data, error: err } = await supabase.from('orders')
-          .select('*')
+          .select('id, store_id, name, created_at, total_price, tags, fulfillment_status, financial_status, cancelled_at, shipping_title, customer_fn, customer_ln, line_items')
           .eq('store_id', store.id)
           .gte('created_at', minISO).lte('created_at', maxISO)
           .order('created_at', { ascending: false }).range(from, from + step - 1);
@@ -69,12 +88,14 @@ export default function DailyDashboard({ store, refreshTrigger }) {
         if ((data || []).length < step) hasMore = false; else from += step;
       }
       setOrders(allOrders);
+      dashboardCache.set(ordersCacheKey, allOrders);
 
       const { data: adData } = await supabase.from('ad_costs').select('date, amount')
         .eq('store_id', store.id).gte('date', minD).lte('date', maxD);
       const newAdCosts = {};
       adData?.forEach(r => newAdCosts[r.date] = r.amount);
       setAdCosts(newAdCosts);
+      dashboardCache.set(adCacheKey, newAdCosts);
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };

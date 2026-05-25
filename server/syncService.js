@@ -8,8 +8,10 @@ const supabase = createClient(
 
 /**
  * Main entry point — fetches store credentials then syncs orders from Shopify.
+ * Uses incremental sync (updated_at_min) when last_synced_at is set on the store.
+ * Falls back to full historical sync on first run.
  */
-async function syncStoreData(storeId) {
+async function syncStoreData(storeId, { forceFullSync = false } = {}) {
   console.log(`[Sync] ▶ Starting sync for store: ${storeId}`);
 
   // Try fetching with shopify_client_id first, fall back without it
@@ -17,7 +19,7 @@ async function syncStoreData(storeId) {
 
   const { data: store, error } = await supabase
     .from('stores')
-    .select('shopify_domain, shopify_access_token, shopify_client_id, dashboard_features')
+    .select('shopify_domain, shopify_access_token, shopify_client_id, dashboard_features, last_synced_at')
     .eq('id', storeId)
     .single();
 
@@ -45,6 +47,21 @@ async function syncStoreData(storeId) {
     if (store.dashboard_features?.sync_from_date) {
       syncFromDate = store.dashboard_features.sync_from_date;
     }
+  }
+
+  // Determine sync mode: incremental (updated_at_min) vs full (created_at_min)
+  // Incremental sync fetches only orders modified since the last sync (±10 min buffer).
+  // This turns a 5000-order full sync into a 10-20 order delta sync on subsequent runs.
+  let syncUrl;
+  const lastSyncedAt = store?.last_synced_at;
+  const useIncremental = !forceFullSync && !!lastSyncedAt;
+
+  if (useIncremental) {
+    const buffer = 10 * 60 * 1000; // 10-minute buffer to catch edge cases
+    const sinceMs = new Date(lastSyncedAt).getTime() - buffer;
+    const sinceISO = new Date(sinceMs).toISOString();
+    console.log(`[Sync] Incremental mode — fetching orders updated since ${sinceISO}`);
+    syncUrl = `https://${shopify_domain || ''}.myshopify.com/admin/api/2024-01/orders.json?status=any&updated_at_min=${sinceISO}&limit=250`;
   }
 
   const accessToken = decrypt(encryptedToken);
@@ -98,9 +115,13 @@ async function syncStoreData(storeId) {
   }
   console.log('[Sync] ✅ Credentials verified. Fetching orders...');
 
-  // Paginate orders
-  // Default to fetching orders from year 2000 to fetch absolutely all historical orders for any store
-  let url = `https://${shopify_domain}.myshopify.com/admin/api/2024-01/orders.json?status=any&created_at_min=${syncFromDate}T00:00:00Z&limit=250`;
+  // Paginate orders — use incremental URL if set, otherwise full historical sync
+  if (!syncUrl) {
+    syncUrl = `https://${shopify_domain}.myshopify.com/admin/api/2024-01/orders.json?status=any&created_at_min=${syncFromDate}T00:00:00Z&limit=250`;
+    console.log(`[Sync] Full sync mode — fetching all orders since ${syncFromDate}`);
+  }
+
+  let url = syncUrl;
   let totalSynced = 0;
   let pageCount = 0;
 
@@ -179,8 +200,14 @@ async function syncStoreData(storeId) {
     url = next ? next[1] : null;
   }
 
-  console.log(`[Sync] ✅ Done. Total synced: ${totalSynced} orders for store ${storeId}`);
-  return { success: true, totalSynced };
+  // Record successful sync time — enables incremental sync on next run
+  await supabase
+    .from('stores')
+    .update({ last_synced_at: new Date().toISOString() })
+    .eq('id', storeId);
+
+  console.log(`[Sync] ✅ Done. Total synced: ${totalSynced} orders for store ${storeId} (${useIncremental ? 'incremental' : 'full'})`);
+  return { success: true, totalSynced, mode: useIncremental ? 'incremental' : 'full' };
 }
 
 module.exports = { syncStoreData };

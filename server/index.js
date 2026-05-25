@@ -442,11 +442,14 @@ app.post('/api/sync/:storeId', async (req, res) => {
   const { storeId } = req.params;
   if (!storeId) return res.status(400).json({ error: 'storeId is required' });
 
-  console.log(`[Sync API] Triggered for store: ${storeId}`);
+  // ?full=true forces a complete historical re-sync (ignores last_synced_at)
+  const forceFullSync = req.query.full === 'true';
+
+  console.log(`[Sync API] Triggered for store: ${storeId} full=${forceFullSync}`);
   try {
-    const result = await syncStoreData(storeId);
+    const result = await syncStoreData(storeId, { forceFullSync });
     console.log(`[Sync API] ✅ Completed for ${storeId}:`, result);
-    res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced });
+    res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced, mode: result.mode });
   } catch (err) {
     console.error(`[Sync API] ❌ Failed for ${storeId}:`, err.message);
     res.status(500).json({ status: 'sync_failed', error: err.message });

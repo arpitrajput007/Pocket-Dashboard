@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
+import { dashboardCache } from '../utils/dashboardCache';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 
@@ -33,6 +34,10 @@ export default function WeeklyView({ store, refreshTrigger }) {
   }, [weekDate]);
 
   useEffect(() => {
+    if (store?.id && refreshTrigger) dashboardCache.bust(store.id);
+  }, [refreshTrigger, store?.id]);
+
+  useEffect(() => {
     if (store?.id) {
       loadPricing();
       fetchOrders();
@@ -52,19 +57,23 @@ export default function WeeklyView({ store, refreshTrigger }) {
   async function fetchOrders() {
     if (!store?.id) return;
     setLoading(true);
-    
+
     const startDateStr = wStart.toISOString().split('T')[0];
     const endDateStr = wEnd.toISOString().split('T')[0];
-    
+    const cacheKey = `${store.id}_weekly_${startDateStr}_${endDateStr}`;
+    const cached = dashboardCache.get(cacheKey);
+    if (cached) { setOrders(cached); setLoading(false); return; }
+
     const { data } = await supabase
       .from('orders')
-      .select('*')
+      .select('id, created_at, total_price, tags, fulfillment_status, financial_status, cancelled_at, shipping_title, line_items')
       .eq('store_id', store.id)
       .gte('created_at', startDateStr + 'T00:00:00')
       .lte('created_at', endDateStr + 'T23:59:59')
       .order('created_at', { ascending: true });
-      
+
     setOrders(data || []);
+    dashboardCache.set(cacheKey, data || []);
     setLoading(false);
   }
 
