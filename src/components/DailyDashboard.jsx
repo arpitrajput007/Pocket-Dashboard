@@ -6,7 +6,7 @@ import { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal }
 import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
   categorizeOrders, getPaymentCounts, getRevenueBreakdown, getTotalRevenue, calcPL,
-  PREPAID_LAUNCH_DATE, isOrderPrepaidRevenue, isOrderDelivered
+  PREPAID_LAUNCH_DATE, isOrderPrepaidRevenue, isOrderDelivered, extractPackSize
 } from '../utils/dashboardUtils';
 
 const today = () => toDateStr(new Date());
@@ -141,7 +141,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       dayOrders.forEach(o => {
         const isCounted = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
         const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
-        lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), isDelivered: isCounted, isFulfilled: isCounted }));
+        lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize: extractPackSize(li.variant_title), isDelivered: isCounted, isFulfilled: isCounted }));
       });
       const pl = calcPL(rev, tagsCounts['Delivered']||0, ad, tagsCounts['Fulfilled']||0, allItems, productPricing);
 
@@ -266,8 +266,9 @@ export default function DailyDashboard({ store, refreshTrigger }) {
             const isCounted = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
             const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
             lineItems.forEach(li => {
-              itemsCount += parseInt(li.quantity || 1); // count ALL items from ALL orders
-              allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), isDelivered: isCounted, isFulfilled: isCounted });
+              const packSize = extractPackSize(li.variant_title);
+              itemsCount += parseInt(li.quantity || 1) * packSize; // count actual units (pack size × qty)
+              allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize, isDelivered: isCounted, isFulfilled: isCounted });
             });
           });
           const pl = calcPL(rev, tCounts['Delivered']||0, ad, tCounts['Fulfilled']||0, allItems, productPricing);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { dashboardCache } from '../utils/dashboardCache';
+import { extractPackSize } from '../utils/dashboardUtils';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 
@@ -93,10 +94,11 @@ export default function AllTimeView({ store, refreshTrigger }) {
         const cp = parseFloat(p.cost_price || 555);
         const ship = parseFloat(p.shipping_cost || 135);
         const qty = item.quantity || 0;
-        
+        const packSize = extractPackSize(item.variant_title);
+
         if (isDel) {
           const rev = qty * parseFloat(item.price || 0);
-          const cost = qty * (cp + ship);
+          const cost = qty * (cp * packSize + ship);
           monthMap[mKey].revenue += rev;
           monthMap[mKey].cost += cost;
           tRevenue += rev;

@@ -3,6 +3,14 @@
 
 export const PRODUCT_COST = 555;
 export const SHIPPING_COST = 135;
+
+// Extracts pack size from a Shopify variant_title like "Pack of 2" → 2
+// Returns 1 for single-unit products or when variant_title is absent
+export function extractPackSize(variantTitle) {
+  if (!variantTitle) return 1;
+  const m = variantTitle.match(/pack\s+of\s+(\d+)/i);
+  return m ? parseInt(m[1]) : 1;
+}
 export const PREPAID_LAUNCH_DATE = '2026-03-28';
 
 export function fmt(n) {
@@ -168,7 +176,7 @@ export function calcPL(revenue, deliveredCount, adCost, fulfilledCount = 0, item
     items.forEach(item => {
       const lookupKey = item.sku || ('TITLE:' + item.title);
       const pricing = productPricing[lookupKey] || { cp: PRODUCT_COST, shipping: SHIPPING_COST };
-      if (item.isDelivered) totalProductCost += pricing.cp * item.quantity;
+      if (item.isDelivered) totalProductCost += pricing.cp * (item.packSize || 1) * item.quantity;
       if (item.isFulfilled) totalLogisticsCost += pricing.shipping * item.quantity;
     });
     if (totalProductCost === 0 && deliveredCount > 0) totalProductCost = deliveredCount * PRODUCT_COST;

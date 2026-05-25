@@ -4,7 +4,7 @@ import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
   isOrderDelivered, isOrderPrepaidRevenue, categorizeOrders,
   getPaymentCounts, getRevenueBreakdown, getTotalRevenue, calcPL,
-  PREPAID_LAUNCH_DATE, PRODUCT_COST, SHIPPING_COST
+  PREPAID_LAUNCH_DATE, PRODUCT_COST, SHIPPING_COST, extractPackSize
 } from '../utils/dashboardUtils';
 
 const today = () => toDateStr(new Date());
@@ -37,7 +37,10 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPrici
     const isCountedForRev = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
     const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
     lineItems.forEach(li => {
-      const key = li.title || 'Unknown';
+      // Group by title + variant so "Pack of 2" and "Pack of 3" are separate rows
+      const variantTitle = li.variant_title || '';
+      const key = (li.title || 'Unknown') + (variantTitle ? '||' + variantTitle : '');
+      const packSize = extractPackSize(variantTitle);
       if (!productMap[key]) {
         const pp = productPricing;
         const lookupKey = li.sku || ('TITLE:' + li.title);
@@ -45,7 +48,8 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPrici
           Object.values(pp).find(p => p.title && p.title.toLowerCase() === (li.title||'').toLowerCase()) ||
           null;
         productMap[key] = {
-          title: key, sku: li.sku || '', pricingFound: !!pricing, qty: 0, revenue: 0,
+          title: li.title || 'Unknown', variantTitle, sku: li.sku || '',
+          pricingFound: !!pricing, qty: 0, revenue: 0, packSize,
           cpPerUnit: pricing ? (pricing.cp ?? PRODUCT_COST) : PRODUCT_COST,
           shippingPerUnit: pricing ? (pricing.shipping ?? SHIPPING_COST) : SHIPPING_COST,
         };
@@ -58,7 +62,7 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPrici
   const products = Object.values(productMap);
   let totRev = 0, totCP = 0, totShip = 0, totAd = 0, totPNL = 0;
   const rows = products.map(p => {
-    const cp = p.cpPerUnit * p.qty, shipping = p.shippingPerUnit * p.qty;
+    const cp = p.cpPerUnit * (p.packSize || 1) * p.qty, shipping = p.shippingPerUnit * p.qty;
     const adSpend = dayAdSplits[p.title] || 0;
     const pnl = p.revenue - cp - shipping - adSpend;
     totRev += p.revenue; totCP += cp; totShip += shipping; totAd += adSpend; totPNL += pnl;
@@ -67,6 +71,7 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPrici
       <tr key={p.title}>
         <td>
           <span style={{ fontWeight:600,color:'#fff' }}>{p.title}</span>
+          {p.variantTitle && <span style={{ fontSize:10,fontWeight:600,color:'#a78bfa',background:'rgba(167,139,250,0.1)',border:'1px solid rgba(167,139,250,0.25)',borderRadius:4,padding:'1px 6px',marginLeft:5 }}>{p.variantTitle}</span>}
           <span style={{ display:'inline-flex',alignItems:'center',justifyContent:'center',background:'rgba(251,191,36,0.12)',color:'#fbbf24',border:'1px solid rgba(251,191,36,0.25)',borderRadius:5,fontSize:10,fontWeight:800,padding:'2px 7px',marginLeft:6 }}>{p.qty}×</span>
           <div style={{ marginTop:3,fontSize:9,padding:'1px 6px',borderRadius:4,display:'inline-block',
             background: p.pricingFound?'rgba(52,211,153,0.12)':'rgba(255,255,255,0.05)',
@@ -245,14 +250,16 @@ function NetProfitModal({ dateStr, prettyDate, pl, onClose }) {
 
 // ── ItemsModal ──────────────────────────────────────────────────────────────
 function ItemsModal({ prettyDate, allItems, onClose }) {
-  // Group by product title, sum quantities
+  // Group by title + variant so "Pack of 2" and "Pack of 3" appear as separate rows
   const productMap = {};
   allItems.forEach(li => {
-    const key = li.title || 'Unknown Product';
+    const variantTitle = li.variant_title || '';
+    const key = (li.title || 'Unknown Product') + (variantTitle ? '||' + variantTitle : '');
     if (!productMap[key]) {
-      productMap[key] = { title: key, sku: li.sku || '', qty: 0 };
+      productMap[key] = { title: li.title || 'Unknown Product', variantTitle, sku: li.sku || '', qty: 0 };
     }
-    productMap[key].qty += parseInt(li.quantity || 1);
+    // qty here is packs ordered; display actual units via packSize
+    productMap[key].qty += parseInt(li.quantity || 1) * (li.packSize || extractPackSize(variantTitle));
   });
 
   const products = Object.values(productMap).sort((a, b) => b.qty - a.qty);
@@ -292,8 +299,11 @@ function ItemsModal({ prettyDate, allItems, onClose }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
+                    {p.variantTitle && (
+                      <div style={{ fontSize: 11, color: '#a78bfa', marginTop: 2, fontWeight: 600 }}>{p.variantTitle}</div>
+                    )}
                     {p.sku && !p.sku.startsWith('TITLE:') && (
-                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 2, fontFamily: 'monospace' }}>SKU: {p.sku}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 1, fontFamily: 'monospace' }}>SKU: {p.sku}</div>
                     )}
                   </div>
                   <div style={{ flexShrink: 0, background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 6, padding: '3px 10px', fontSize: 14, fontWeight: 800, color: '#fbbf24' }}>
