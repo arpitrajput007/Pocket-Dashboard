@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { LayoutDashboard } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { dashboardCache } from '../utils/dashboardCache';
-import { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard } from './DashboardModals';
+import { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal } from './DashboardModals';
 import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
   categorizeOrders, getPaymentCounts, getRevenueBreakdown, getTotalRevenue, calcPL,
@@ -306,7 +306,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
 
               <div className="metrics-grid" style={{ marginBottom: 24 }}>
                 <MetricCard label="Orders" value={dayOrders.length} glow="white" active={filterKey === 'orders'} onClick={() => toggleDayFilter(dateStr, 'orders')} />
-                <MetricCard label="Number of Items" value={itemsCount} glow="white" />
+                <MetricCard label="Number of Items" value={itemsCount} glow="white" note="Click to see breakdown" onClick={() => setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems })} />
                 <MetricCard label="CPP" value={itemsCount > 0 ? fmt(cpp) : '₹0'} glow="white" note="Click for product breakdown" />
                 <MetricCard label="Fulfilled" value={tCounts['Fulfilled'] || 0} color="var(--profit-color)" glow="green" active={filterKey === 'fulfilled'} onClick={() => toggleDayFilter(dateStr, 'fulfilled')} />
                 <MetricCard label="Delivered" value={tCounts['Delivered'] || 0} color="var(--profit-color)" glow="green" active={filterKey === 'delivered'} onClick={() => toggleDayFilter(dateStr, 'delivered')} />
@@ -381,6 +381,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'ad' && <AdSpendModal dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} onClose={() => setModalState({ type: null })} />}
     </div>
   );
 }

@@ -243,4 +243,76 @@ function NetProfitModal({ dateStr, prettyDate, pl, onClose }) {
   );
 }
 
-export { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard };
+// ── ItemsModal ──────────────────────────────────────────────────────────────
+function ItemsModal({ prettyDate, allItems, onClose }) {
+  // Group by product title, sum quantities
+  const productMap = {};
+  allItems.forEach(li => {
+    const key = li.title || 'Unknown Product';
+    if (!productMap[key]) {
+      productMap[key] = { title: key, sku: li.sku || '', qty: 0 };
+    }
+    productMap[key].qty += parseInt(li.quantity || 1);
+  });
+
+  const products = Object.values(productMap).sort((a, b) => b.qty - a.qty);
+  const totalUnits = products.reduce((s, p) => s + p.qty, 0);
+
+  return (
+    <div className="modal-overlay active" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 480, padding: '28px 24px' }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>📦 Items Ordered</div>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#fff' }}>{prettyDate}</h2>
+          </div>
+          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        </div>
+
+        {/* Summary pill */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+          <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.25)', fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>
+            {totalUnits} total units
+          </div>
+          <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)', fontSize: 13, fontWeight: 600, color: '#38bdf8' }}>
+            {products.length} SKU{products.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+
+        {/* Product list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+          {products.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>No items for this day</div>
+          ) : products.map((p, i) => {
+            const pct = totalUnits > 0 ? (p.qty / totalUnits) * 100 : 0;
+            return (
+              <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
+                    {p.sku && !p.sku.startsWith('TITLE:') && (
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 2, fontFamily: 'monospace' }}>SKU: {p.sku}</div>
+                    )}
+                  </div>
+                  <div style={{ flexShrink: 0, background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 6, padding: '3px 10px', fontSize: 14, fontWeight: 800, color: '#fbbf24' }}>
+                    {p.qty}×
+                  </div>
+                </div>
+                {/* Quantity bar */}
+                <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #a78bfa, #38bdf8)', borderRadius: 2, transition: 'width 0.4s ease' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button onClick={onClose} className="primary" style={{ width: '100%', marginTop: 20, padding: '12px', fontSize: 14, borderRadius: 10, fontWeight: 600 }}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+export { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal };
