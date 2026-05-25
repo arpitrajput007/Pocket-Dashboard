@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { OpenAI } = require('openai');
 const { syncStoreData } = require('./syncService');
@@ -660,9 +661,51 @@ Keep your answers concise, highly actionable, and professional. Use formatting (
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
+/**
+ * Auto-sync cron job — runs every 5 minutes.
+ * Fetches all active stores and runs an incremental sync for each.
+ * Stores are staggered 2 seconds apart to avoid Shopify API bursts.
+ * Uses incremental mode (updated_at_min) so each run is fast and cheap.
+ */
+async function runAutoSync() {
+  const { data: stores, error } = await supabase
+    .from('stores')
+    .select('id, store_name, shopify_domain')
+    .eq('is_active', true);
+
+  if (error || !stores || stores.length === 0) {
+    console.log('[AutoSync] No active stores found or error:', error?.message);
+    return;
+  }
+
+  console.log(`[AutoSync] Starting sync for ${stores.length} store(s)...`);
+
+  for (let i = 0; i < stores.length; i++) {
+    const store = stores[i];
+    // Stagger: 2 second gap between stores to avoid API bursts at 50+ stores
+    if (i > 0) await new Promise(r => setTimeout(r, 2000));
+    try {
+      const result = await syncStoreData(store.id);
+      console.log(`[AutoSync] ✅ ${store.store_name} (${store.shopify_domain}): ${result.totalSynced} orders synced (${result.mode})`);
+    } catch (err) {
+      // One store failing must not stop the others
+      console.error(`[AutoSync] ❌ ${store.store_name} (${store.shopify_domain}): ${err.message}`);
+    }
+  }
+
+  console.log('[AutoSync] ✅ Cycle complete.');
+}
+
+// Schedule: every 5 minutes
+cron.schedule('*/5 * * * *', () => {
+  console.log('[AutoSync] ⏰ Triggered');
+  runAutoSync().catch(err => console.error('[AutoSync] Unhandled error:', err.message));
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Pocket Dashboard Sync Server running on http://localhost:${PORT}`);
+    console.log('[AutoSync] Scheduled — every 5 minutes');
   });
 }
 
