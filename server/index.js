@@ -23,7 +23,9 @@ const corsOptions = {
   credentials: true,
 };
 app.use(cors(corsOptions));
-app.use(express.json());
+// 10MB body limit — screenshots for the ad-spend OCR endpoint can be 1-3MB
+// once base64-encoded, so the default 100kb limit is too small.
+app.use(express.json({ limit: '10mb' }));
 
 /**
  * Registers Webhooks in Shopify automatically
@@ -782,6 +784,95 @@ Keep your answers concise, highly actionable, and professional. Use formatting (
   } catch (err) {
     console.error('[Copilot Error]', err);
     res.status(500).json({ error: 'Failed to process AI request.' });
+  }
+});
+
+/**
+ * POST /api/ad-spend/extract
+ * OCR an ad-platform screenshot via GPT-4o Vision and return structured spend.
+ * Body: { storeId, dateStr (YYYY-MM-DD), imageBase64, mimeType }
+ * Returns: { platform, amount, currency, confidence, notes }
+ *
+ * The endpoint does NOT save to ad_costs by itself — the frontend lets the
+ * owner review the extraction before committing. This keeps the workflow
+ * "AI suggests, human confirms" rather than blind automation.
+ */
+app.post('/api/ad-spend/extract', async (req, res) => {
+  const { storeId, dateStr, imageBase64, mimeType } = req.body || {};
+  if (!storeId || !dateStr || !imageBase64) {
+    return res.status(400).json({ error: 'storeId, dateStr and imageBase64 are required' });
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(500).json({ error: 'OpenAI API key not configured on server' });
+  }
+
+  const dataUrl = imageBase64.startsWith('data:')
+    ? imageBase64
+    : `data:${mimeType || 'image/png'};base64,${imageBase64}`;
+
+  try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const systemPrompt = `You are an OCR assistant that extracts ad-spend data from screenshots of advertising dashboards.
+
+Identify which platform the screenshot is from and extract the total ad spend visible.
+
+Recognize these platforms by their UI cues:
+- "meta": Meta Ads Manager / Facebook Ads (blue color scheme, Facebook/Instagram icons, "Ads Manager" header)
+- "google": Google Ads (multi-colored G logo, "Google Ads" header, campaign tables)
+- "youtube": YouTube Ads (red play button, YouTube branding) — note: YouTube ads are usually within Google Ads, only return "youtube" if the screenshot is explicitly the YouTube-only view
+- "tiktok": TikTok Ads Manager (black UI, TikTok logo)
+- "other": anything else
+
+Return STRICT JSON with this exact shape (no markdown, no fences):
+{
+  "platform": "meta" | "google" | "youtube" | "tiktok" | "other",
+  "amount": <number, the total spend visible. No currency symbols, no commas. e.g. 1240.50>,
+  "currency": "INR" | "USD" | "EUR" | "GBP" | "AED" | <other 3-letter ISO code>,
+  "confidence": <number between 0 and 1>,
+  "notes": <string, 1 short sentence explaining what you found>
+}
+
+Rules:
+- If multiple amounts are visible, pick the TOTAL spend (usually labeled "Amount spent", "Total spend", "Cost", or the summary at the top)
+- If you can't extract a clear total with at least 0.5 confidence, return amount: 0 and explain in notes
+- Currency defaults to "INR" if you see ₹ or "Rs"
+- Output JSON only, nothing else`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: `This screenshot is from ${dateStr} (or thereabouts). Extract the total ad spend.` },
+            { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
+          ],
+        },
+      ],
+      temperature: 0,
+      max_tokens: 250,
+      response_format: { type: 'json_object' },
+    });
+
+    const raw = completion.choices[0]?.message?.content || '{}';
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch { return res.status(500).json({ error: 'Vision model returned non-JSON', raw }); }
+
+    // Sanitize
+    const platform = ['meta', 'google', 'youtube', 'tiktok', 'other'].includes(parsed.platform) ? parsed.platform : 'other';
+    const amount = Number(parsed.amount) || 0;
+    const currency = (parsed.currency || 'INR').toString().toUpperCase().slice(0, 4);
+    const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+    const notes = (parsed.notes || '').toString().slice(0, 300);
+
+    console.log(`[AdOCR] storeId=${storeId} date=${dateStr} → platform=${platform} amount=${amount} ${currency} conf=${confidence}`);
+    res.json({ platform, amount, currency, confidence, notes });
+  } catch (err) {
+    console.error('[AdOCR Error]', err.message);
+    res.status(500).json({ error: 'OCR failed: ' + err.message });
   }
 });
 

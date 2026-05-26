@@ -145,54 +145,223 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPrici
 }
 
 // ── AdSpendModal ───────────────────────────────────────────────────────────
-function AdSpendModal({ dateStr, dayOrders, adCosts, onSave, onClose }) {
+// Screenshot-OCR powered: drag/drop a Meta/Google/TikTok dashboard screenshot,
+// GPT-4o Vision extracts the platform + amount, owner reviews and saves.
+// Multiple platform screenshots can be added — totals auto-sum.
+const PLATFORM_LIST = [
+  { key: 'meta', label: 'Meta', color: '#1877f2' },
+  { key: 'google', label: 'Google', color: '#fbbc05' },
+  { key: 'youtube', label: 'YouTube', color: '#ff0000' },
+  { key: 'tiktok', label: 'TikTok', color: '#69c9d0' },
+  { key: 'other', label: 'Other', color: '#9ca3af' },
+];
+
+function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
   const currentTotal = adCosts[dateStr] || 0;
-  const [total, setTotal] = useState(currentTotal);
+  const [breakdown, setBreakdown] = useState({ meta: 0, google: 0, youtube: 0, tiktok: 0, other: 0 });
+  const [breakdownLoaded, setBreakdownLoaded] = useState(false);
+  const [totalOverride, setTotalOverride] = useState(null); // null = derive from breakdown
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState(null);
+  const [lastExtracted, setLastExtracted] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+
   const dailyProductAdCosts = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
   const [splits, setSplits] = useState(dailyProductAdCosts[dateStr] || {});
 
   const products = [...new Set(dayOrders.flatMap(o => (o.line_items||[]).map(li => li.title)).filter(Boolean))];
   const prettyDate = parseDateStr(dateStr).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 
-  const handleSave = () => {
+  // Lazy-load existing breakdown for this date so reopening shows what was saved.
+  useEffect(() => {
+    if (!store?.id || !dateStr) return;
+    (async () => {
+      const { data } = await supabase.from('ad_costs')
+        .select('amount, breakdown')
+        .eq('store_id', store.id).eq('date', dateStr).maybeSingle();
+      if (data?.breakdown && typeof data.breakdown === 'object' && Object.keys(data.breakdown).length > 0) {
+        setBreakdown({ meta: 0, google: 0, youtube: 0, tiktok: 0, other: 0, ...data.breakdown });
+      } else if (data?.amount > 0) {
+        // Legacy row with only a total — keep it as a manual override.
+        setTotalOverride(data.amount);
+      }
+      setBreakdownLoaded(true);
+    })();
+  }, [store?.id, dateStr]);
+
+  const derivedTotal = Object.values(breakdown).reduce((s, v) => s + (Number(v) || 0), 0);
+  const total = totalOverride != null ? totalOverride : derivedTotal;
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setOcrError('Please upload an image file'); return; }
+    if (file.size > 9 * 1024 * 1024) { setOcrError('Image too large (max 9 MB)'); return; }
+    setOcrLoading(true); setOcrError(null); setLastExtracted(null);
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/ad-spend/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storeId: store.id, dateStr, imageBase64: dataUrl, mimeType: file.type }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Extraction failed');
+      // Apply to the matching platform; if "other" comes back, route to 'other'.
+      const key = json.platform || 'other';
+      setBreakdown(b => ({ ...b, [key]: Number(json.amount) || 0 }));
+      setTotalOverride(null); // re-derive from breakdown
+      setLastExtracted(json);
+    } catch (e) {
+      setOcrError(e.message);
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    // Persist per-product breakdown to localStorage (existing behaviour)
     const newDPC = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
     newDPC[dateStr] = {};
     Object.entries(splits).forEach(([k,v]) => { if (v > 0) newDPC[dateStr][k] = v; });
     localStorage.setItem('dailyProductAdCosts', JSON.stringify(newDPC));
-    onSave(dateStr, total);
+
+    // Save total + per-platform breakdown to ad_costs
+    const cleanBreakdown = {};
+    Object.entries(breakdown).forEach(([k, v]) => { if (v > 0) cleanBreakdown[k] = Number(v); });
+    const source = lastExtracted ? 'screenshot_ocr' : 'manual';
+    await onSave(dateStr, total, cleanBreakdown, source);
     onClose();
   };
 
   return (
     <div className="modal-overlay active" onClick={e => e.target===e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth:480 }}>
+      <div className="modal" style={{ maxWidth:520 }}>
         <h2 style={{ margin:'0 0 4px' }}>Ad Spend — {prettyDate}</h2>
-        <p style={{ color:'var(--text-muted)',fontSize:14,marginBottom:20 }}>Set total ad spend and optional per-product breakdown.</p>
-        <div className="form-group">
-          <label>Total Ad Spend (₹)</label>
-          <input type="number" value={total} onChange={e=>setTotal(parseFloat(e.target.value)||0)}
-            style={{ width:'100%',padding:12,background:'rgba(0,0,0,0.2)',border:'1px solid var(--border)',color:'white',borderRadius:8,boxSizing:'border-box' }} />
+        <p style={{ color:'var(--text-muted)',fontSize:14,marginBottom:18 }}>
+          Drop a screenshot of your ad dashboard — AI auto-fills the platform &amp; amount. Or enter manually.
+        </p>
+
+        {/* OCR drop zone */}
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}
+          onClick={() => fileInputRef.current?.click()}
+          onPaste={e => { const f = Array.from(e.clipboardData?.files || [])[0]; if (f) handleFile(f); }}
+          tabIndex={0}
+          style={{
+            border: `2px dashed ${dragOver ? 'rgba(167,139,250,0.6)' : 'rgba(255,255,255,0.15)'}`,
+            background: dragOver ? 'rgba(167,139,250,0.06)' : 'rgba(0,0,0,0.2)',
+            borderRadius: 12, padding: '20px 16px', textAlign: 'center', cursor: 'pointer',
+            transition: 'all 0.2s', marginBottom: 16, outline: 'none',
+          }}
+        >
+          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+          {ocrLoading ? (
+            <div style={{ color: 'rgba(167,139,250,0.9)', fontSize: 13, fontWeight: 600 }}>
+              <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(167,139,250,0.3)', borderTopColor: 'rgba(167,139,250,1)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', marginRight: 8, verticalAlign: 'middle' }}/>
+              Reading your screenshot…
+            </div>
+          ) : (
+            <>
+              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                📷 Drop screenshot here · click to browse · paste (⌘V)
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>
+                Meta Ads Manager, Google Ads, TikTok — AI auto-detects the platform
+              </div>
+            </>
+          )}
         </div>
+
+        {/* Extraction result banner */}
+        {lastExtracted && !ocrLoading && (
+          <div style={{
+            background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)',
+            borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13,
+            color: 'rgba(52,211,153,0.95)',
+          }}>
+            ✓ Extracted <strong style={{ textTransform: 'capitalize' }}>{lastExtracted.platform}</strong> spend: <strong>₹{Number(lastExtracted.amount).toLocaleString('en-IN')}</strong>
+            <span style={{ opacity: 0.6, marginLeft: 6 }}>({Math.round(lastExtracted.confidence * 100)}% confidence)</span>
+            {lastExtracted.notes && (
+              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 3 }}>{lastExtracted.notes}</div>
+            )}
+          </div>
+        )}
+        {ocrError && (
+          <div style={{
+            background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)',
+            borderRadius: 10, padding: '8px 12px', marginBottom: 16, fontSize: 12,
+            color: '#fb7185',
+          }}>⚠ {ocrError}</div>
+        )}
+
+        {/* Per-platform breakdown */}
+        <div style={{ fontSize:12,color:'var(--text-muted)',marginBottom:8,fontWeight:700,textTransform:'uppercase',letterSpacing:0.5 }}>By Platform</div>
+        <div style={{ display:'flex',flexDirection:'column',gap:6,marginBottom:16 }}>
+          {PLATFORM_LIST.map(p => (
+            <div key={p.key} style={{ display:'flex',alignItems:'center',gap:10,background:'rgba(0,0,0,0.2)',padding:'8px 12px',borderRadius:8,border:'1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ width:8,height:8,borderRadius:'50%',background:p.color,flexShrink:0 }}/>
+              <span style={{ flex:1,fontSize:13,fontWeight:600 }}>{p.label}</span>
+              <span style={{ color:'rgba(255,255,255,0.3)',fontSize:12 }}>₹</span>
+              <input type="number" value={breakdown[p.key] === 0 ? '' : breakdown[p.key]} placeholder="0"
+                onChange={e => {
+                  const v = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  setBreakdown(b => ({ ...b, [p.key]: v }));
+                  setTotalOverride(null);
+                }}
+                onFocus={e => e.target.select()}
+                style={{ width:100,padding:'6px 8px',background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.08)',color:'white',borderRadius:6,outline:'none',fontSize:13,textAlign:'right' }} />
+            </div>
+          ))}
+        </div>
+
+        {/* Total — derived but overridable */}
+        <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(167,139,250,0.08)',border:'1px solid rgba(167,139,250,0.2)',padding:'10px 14px',borderRadius:10,marginBottom:16 }}>
+          <span style={{ fontSize:13,fontWeight:700,color:'rgba(167,139,250,0.95)' }}>Total Ad Spend</span>
+          <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+            <span style={{ color:'rgba(255,255,255,0.4)',fontSize:13 }}>₹</span>
+            <input type="number" value={total === 0 ? '' : total} placeholder="0"
+              onChange={e => setTotalOverride(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+              onFocus={e => e.target.select()}
+              style={{ width:120,padding:'6px 8px',background:'rgba(0,0,0,0.35)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:6,outline:'none',fontSize:14,fontWeight:700,textAlign:'right' }} />
+          </div>
+        </div>
+
+        {/* Existing per-product splits (optional) */}
         {products.length > 0 && (
-          <div>
-            <div style={{ fontSize:13,color:'var(--text-muted)',marginBottom:12,fontWeight:600 }}>Per-Product Breakdown (optional)</div>
-            <div style={{ display:'flex',flexDirection:'column',gap:8,maxHeight:240,overflowY:'auto' }}>
+          <details style={{ marginBottom: 16 }}>
+            <summary style={{ fontSize:12,color:'var(--text-muted)',cursor:'pointer',fontWeight:600,padding:'4px 0' }}>
+              Per-Product Breakdown (optional)
+            </summary>
+            <div style={{ display:'flex',flexDirection:'column',gap:6,marginTop:10,maxHeight:200,overflowY:'auto' }}>
               {products.map(p => (
-                <div key={p} style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:'rgba(0,0,0,0.2)',padding:'8px 12px',borderRadius:6,border:'1px solid var(--border)' }}>
-                  <span style={{ fontWeight:600,fontSize:13,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginRight:12 }}>{p}</span>
+                <div key={p} style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:'rgba(0,0,0,0.2)',padding:'6px 10px',borderRadius:6,border:'1px solid var(--border)' }}>
+                  <span style={{ fontWeight:500,fontSize:12,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginRight:10 }}>{p}</span>
                   <input type="number" value={splits[p]||''} placeholder="0"
                     onChange={e => setSplits(s => ({ ...s, [p]: parseFloat(e.target.value)||0 }))}
-                    style={{ width:80,padding:6,background:'rgba(0,0,0,0.3)',border:'1px solid var(--border)',color:'white',borderRadius:4,outline:'none' }} />
+                    onFocus={e => e.target.select()}
+                    style={{ width:80,padding:5,background:'rgba(0,0,0,0.3)',border:'1px solid var(--border)',color:'white',borderRadius:4,outline:'none',fontSize:12 }} />
                 </div>
               ))}
             </div>
-          </div>
+          </details>
         )}
-        <div style={{ display:'flex',gap:12,marginTop:24 }}>
+
+        <div style={{ display:'flex',gap:12 }}>
           <button onClick={handleSave} className="primary" style={{ flex:1 }}>Save</button>
           <button onClick={onClose} style={{ flex:1 }}>Cancel</button>
         </div>
       </div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }

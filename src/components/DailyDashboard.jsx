@@ -132,9 +132,11 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     finally { setLoading(false); }
   };
 
-  const handleSaveAdCost = async (dateStr, total) => {
+  const handleSaveAdCost = async (dateStr, total, breakdown = null, source = 'manual') => {
     setAdCosts(prev => ({ ...prev, [dateStr]: total }));
-    await supabase.from('ad_costs').upsert({ date: dateStr, amount: total, store_id: store.id }, { onConflict: 'date,store_id' });
+    const row = { date: dateStr, amount: total, store_id: store.id, source };
+    if (breakdown) row.breakdown = breakdown;
+    await supabase.from('ad_costs').upsert(row, { onConflict: 'date,store_id' });
   };
 
   const toggleOrderExpanded = (id) => {
@@ -412,7 +414,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       </div>
 
       {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
-      {modalState.type === 'ad' && <AdSpendModal dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} onClose={() => setModalState({ type: null })} />}
     </div>
