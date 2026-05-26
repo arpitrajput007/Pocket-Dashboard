@@ -15,7 +15,7 @@ async function syncStoreData(storeId, { forceFullSync = false } = {}) {
   console.log(`[Sync] ▶ Starting sync for store: ${storeId}`);
 
   // Try fetching with shopify_client_id first, fall back without it
-  let shopify_domain, encryptedToken, encryptedClientId, syncFromDate = '2000-01-01';
+  let shopify_domain, encryptedToken, encryptedClientId, syncFromDate = '2000-01-01', lastSyncedAt = null;
 
   const { data: store, error } = await supabase
     .from('stores')
@@ -27,7 +27,7 @@ async function syncStoreData(storeId, { forceFullSync = false } = {}) {
     console.warn('[Sync] shopify_client_id column may not exist, retrying:', error.message);
     const { data: store2, error: err2 } = await supabase
       .from('stores')
-      .select('shopify_domain, shopify_access_token, dashboard_features')
+      .select('shopify_domain, shopify_access_token, dashboard_features, last_synced_at')
       .eq('id', storeId)
       .single();
 
@@ -35,6 +35,7 @@ async function syncStoreData(storeId, { forceFullSync = false } = {}) {
     shopify_domain = store2.shopify_domain;
     encryptedToken = store2.shopify_access_token;
     encryptedClientId = null;
+    lastSyncedAt = store2.last_synced_at || null;
     if (store2.dashboard_features?.sync_from_date) {
       syncFromDate = store2.dashboard_features.sync_from_date;
     }
@@ -44,6 +45,7 @@ async function syncStoreData(storeId, { forceFullSync = false } = {}) {
     shopify_domain = store.shopify_domain;
     encryptedToken = store.shopify_access_token;
     encryptedClientId = store.shopify_client_id || null;
+    lastSyncedAt = store.last_synced_at || null;
     if (store.dashboard_features?.sync_from_date) {
       syncFromDate = store.dashboard_features.sync_from_date;
     }
@@ -53,7 +55,6 @@ async function syncStoreData(storeId, { forceFullSync = false } = {}) {
   // Incremental sync fetches only orders modified since the last sync (±10 min buffer).
   // This turns a 5000-order full sync into a 10-20 order delta sync on subsequent runs.
   let syncUrl;
-  const lastSyncedAt = store?.last_synced_at;
   const useIncremental = !forceFullSync && !!lastSyncedAt;
 
   if (useIncremental) {

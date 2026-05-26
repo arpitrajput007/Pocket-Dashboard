@@ -702,10 +702,20 @@ cron.schedule('*/5 * * * *', () => {
   runAutoSync().catch(err => console.error('[AutoSync] Unhandled error:', err.message));
 });
 
+// Keep-alive: Render free tier spins down after 15 min of inactivity, killing the cron job.
+// Ping our own /api/health every 14 minutes so the process never sleeps.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+setInterval(() => {
+  fetch(`${SELF_URL}/api/health`)
+    .then(() => console.log('[KeepAlive] Pinged self — server stays awake'))
+    .catch(err => console.warn('[KeepAlive] Ping failed:', err.message));
+}, 14 * 60 * 1000);
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Pocket Dashboard Sync Server running on http://localhost:${PORT}`);
     console.log('[AutoSync] Scheduled — every 5 minutes');
+    console.log('[KeepAlive] Ping scheduled — every 14 minutes');
   });
 }
 
