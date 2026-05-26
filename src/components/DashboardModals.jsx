@@ -209,7 +209,13 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
       const res = await fetch(`${apiUrl}/api/ad-spend/extract`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storeId: store.id, dateStr, imageBase64: dataUrl, mimeType: file.type }),
+        body: JSON.stringify({
+          storeId: store.id,
+          dateStr,
+          imageBase64: dataUrl,
+          mimeType: file.type,
+          productTitles: products,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Extraction failed');
@@ -217,6 +223,19 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
       const key = json.platform || 'other';
       setBreakdown(b => ({ ...b, [key]: Number(json.amount) || 0 }));
       setTotalOverride(null); // re-derive from breakdown
+
+      // Merge AI-matched product splits into the per-product splits map.
+      // Owner can still adjust them before saving.
+      if (json.productSplits && typeof json.productSplits === 'object') {
+        setSplits(prev => {
+          const merged = { ...prev };
+          Object.entries(json.productSplits).forEach(([title, amount]) => {
+            const n = Number(amount) || 0;
+            if (n > 0) merged[title] = n;
+          });
+          return merged;
+        });
+      }
       setLastExtracted(json);
     } catch (e) {
       setOcrError(e.message);
@@ -283,19 +302,27 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
         </div>
 
         {/* Extraction result banner */}
-        {lastExtracted && !ocrLoading && (
-          <div style={{
-            background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)',
-            borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13,
-            color: 'rgba(52,211,153,0.95)',
-          }}>
-            ✓ Extracted <strong style={{ textTransform: 'capitalize' }}>{lastExtracted.platform}</strong> spend: <strong>₹{Number(lastExtracted.amount).toLocaleString('en-IN')}</strong>
-            <span style={{ opacity: 0.6, marginLeft: 6 }}>({Math.round(lastExtracted.confidence * 100)}% confidence)</span>
-            {lastExtracted.notes && (
-              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 3 }}>{lastExtracted.notes}</div>
-            )}
-          </div>
-        )}
+        {lastExtracted && !ocrLoading && (() => {
+          const matchCount = lastExtracted.productSplits ? Object.keys(lastExtracted.productSplits).length : 0;
+          return (
+            <div style={{
+              background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)',
+              borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13,
+              color: 'rgba(52,211,153,0.95)',
+            }}>
+              ✓ Extracted <strong style={{ textTransform: 'capitalize' }}>{lastExtracted.platform}</strong> spend: <strong>₹{Number(lastExtracted.amount).toLocaleString('en-IN')}</strong>
+              <span style={{ opacity: 0.6, marginLeft: 6 }}>({Math.round(lastExtracted.confidence * 100)}% confidence)</span>
+              {matchCount > 0 && (
+                <div style={{ fontSize: 11, opacity: 0.9, marginTop: 3 }}>
+                  Auto-matched {matchCount} product{matchCount > 1 ? 's' : ''} from campaign names — review below.
+                </div>
+              )}
+              {lastExtracted.notes && (
+                <div style={{ fontSize: 11, opacity: 0.7, marginTop: 3 }}>{lastExtracted.notes}</div>
+              )}
+            </div>
+          );
+        })()}
         {ocrError && (
           <div style={{
             background: 'rgba(251,113,133,0.1)', border: '1px solid rgba(251,113,133,0.3)',
@@ -336,11 +363,11 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
           </div>
         </div>
 
-        {/* Existing per-product splits (optional) */}
+        {/* Existing per-product splits (optional). Opens automatically when AI auto-filled it. */}
         {products.length > 0 && (
-          <details style={{ marginBottom: 16 }}>
+          <details style={{ marginBottom: 16 }} open={Object.keys(splits).length > 0}>
             <summary style={{ fontSize:12,color:'var(--text-muted)',cursor:'pointer',fontWeight:600,padding:'4px 0' }}>
-              Per-Product Breakdown (optional)
+              Per-Product Breakdown {Object.keys(splits).length > 0 ? `(${Object.keys(splits).length} filled)` : '(optional)'}
             </summary>
             <div style={{ display:'flex',flexDirection:'column',gap:6,marginTop:10,maxHeight:200,overflowY:'auto' }}>
               {products.map(p => (

@@ -798,7 +798,7 @@ Keep your answers concise, highly actionable, and professional. Use formatting (
  * "AI suggests, human confirms" rather than blind automation.
  */
 app.post('/api/ad-spend/extract', async (req, res) => {
-  const { storeId, dateStr, imageBase64, mimeType } = req.body || {};
+  const { storeId, dateStr, imageBase64, mimeType, productTitles } = req.body || {};
   if (!storeId || !dateStr || !imageBase64) {
     return res.status(400).json({ error: 'storeId, dateStr and imageBase64 are required' });
   }
@@ -810,34 +810,47 @@ app.post('/api/ad-spend/extract', async (req, res) => {
     ? imageBase64
     : `data:${mimeType || 'image/png'};base64,${imageBase64}`;
 
+  // Trim product list — large lists waste tokens and confuse matching.
+  const products = Array.isArray(productTitles) ? productTitles.slice(0, 40).filter(t => typeof t === 'string' && t.trim()) : [];
+
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const systemPrompt = `You are an OCR assistant that extracts ad-spend data from screenshots of advertising dashboards.
+    const systemPrompt = `You are an OCR assistant that extracts ad-spend data from screenshots of advertising dashboards (Meta Ads Manager, Google Ads, TikTok Ads, etc).
 
-Identify which platform the screenshot is from and extract the total ad spend visible.
+Your job:
+1. Identify the platform from UI cues:
+   - "meta": Meta Ads Manager / Facebook Ads (blue, Facebook/Instagram icons, "Ads Manager")
+   - "google": Google Ads (multi-color G logo, "Google Ads" header)
+   - "youtube": YouTube Ads (red play button branding) — only if it's a YouTube-specific view
+   - "tiktok": TikTok Ads Manager (black UI)
+   - "other": anything else
 
-Recognize these platforms by their UI cues:
-- "meta": Meta Ads Manager / Facebook Ads (blue color scheme, Facebook/Instagram icons, "Ads Manager" header)
-- "google": Google Ads (multi-colored G logo, "Google Ads" header, campaign tables)
-- "youtube": YouTube Ads (red play button, YouTube branding) — note: YouTube ads are usually within Google Ads, only return "youtube" if the screenshot is explicitly the YouTube-only view
-- "tiktok": TikTok Ads Manager (black UI, TikTok logo)
-- "other": anything else
+2. Extract the TOTAL ad spend visible (usually labeled "Amount spent", "Total spend", "Cost", or the top-of-page summary).
 
-Return STRICT JSON with this exact shape (no markdown, no fences):
+3. If campaign-level / ad-set-level breakdown is visible AND a list of the user's product titles is provided, attempt to MATCH each campaign row to one of the user's products. Only return matches you are CONFIDENT about — campaign names usually contain the product name as a substring or close variant (e.g. "BNB_Conv_Paper-Paint_May25" matches "BNB Paper Paint for kids"). If no clear match, skip that campaign — do NOT force matches.
+
+Return STRICT JSON (no markdown, no fences):
 {
   "platform": "meta" | "google" | "youtube" | "tiktok" | "other",
-  "amount": <number, the total spend visible. No currency symbols, no commas. e.g. 1240.50>,
-  "currency": "INR" | "USD" | "EUR" | "GBP" | "AED" | <other 3-letter ISO code>,
-  "confidence": <number between 0 and 1>,
-  "notes": <string, 1 short sentence explaining what you found>
+  "amount": <number, no symbols/commas>,
+  "currency": "INR" | "USD" | "EUR" | <ISO code>,
+  "confidence": <0-1>,
+  "notes": <1 short sentence>,
+  "productSplits": { "<exact product title from the provided list>": <amount>, ... }
 }
 
 Rules:
-- If multiple amounts are visible, pick the TOTAL spend (usually labeled "Amount spent", "Total spend", "Cost", or the summary at the top)
-- If you can't extract a clear total with at least 0.5 confidence, return amount: 0 and explain in notes
-- Currency defaults to "INR" if you see ₹ or "Rs"
-- Output JSON only, nothing else`;
+- "productSplits" keys MUST match the provided product titles exactly (copy/paste them).
+- If no product list is provided OR no clear matches exist, productSplits = {}.
+- The sum of productSplits should be <= amount. They don't have to add up exactly (some campaigns may not match any product).
+- Currency defaults to "INR" if you see ₹ or "Rs".
+- If you can't extract a clear total with >= 0.5 confidence, return amount: 0.
+- Output JSON only.`;
+
+    const userText = products.length > 0
+      ? `Screenshot date: ${dateStr}.\n\nThe user's products are:\n${products.map((t, i) => `${i+1}. ${t}`).join('\n')}\n\nExtract total spend and match campaigns to these products if visible.`
+      : `Screenshot date: ${dateStr}. Extract the total ad spend. No product list provided — return productSplits: {}.`;
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
@@ -846,13 +859,13 @@ Rules:
         {
           role: 'user',
           content: [
-            { type: 'text', text: `This screenshot is from ${dateStr} (or thereabouts). Extract the total ad spend.` },
+            { type: 'text', text: userText },
             { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
           ],
         },
       ],
       temperature: 0,
-      max_tokens: 250,
+      max_tokens: 700,
       response_format: { type: 'json_object' },
     });
 
@@ -868,8 +881,18 @@ Rules:
     const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
     const notes = (parsed.notes || '').toString().slice(0, 300);
 
-    console.log(`[AdOCR] storeId=${storeId} date=${dateStr} → platform=${platform} amount=${amount} ${currency} conf=${confidence}`);
-    res.json({ platform, amount, currency, confidence, notes });
+    // Filter productSplits: must be in the supplied product list, must be > 0.
+    const productSplits = {};
+    if (parsed.productSplits && typeof parsed.productSplits === 'object' && products.length > 0) {
+      const allowed = new Set(products);
+      Object.entries(parsed.productSplits).forEach(([title, val]) => {
+        const n = Number(val);
+        if (allowed.has(title) && n > 0) productSplits[title] = n;
+      });
+    }
+
+    console.log(`[AdOCR] storeId=${storeId} date=${dateStr} → platform=${platform} amount=${amount} ${currency} conf=${confidence} productMatches=${Object.keys(productSplits).length}`);
+    res.json({ platform, amount, currency, confidence, notes, productSplits });
   } catch (err) {
     console.error('[AdOCR Error]', err.message);
     res.status(500).json({ error: 'OCR failed: ' + err.message });
