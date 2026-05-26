@@ -33,8 +33,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
   const [modalState, setModalState] = useState({ type: null, date: null, prettyDate: null });
 
   useEffect(() => {
-    fetchPricing();
-  }, []);
+    if (store?.id) fetchPricing();
+  }, [store?.id, refreshTrigger]);
 
   // Bust cache when a sync completes so the fresh data is loaded
   useEffect(() => {
@@ -45,12 +45,44 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     if (store?.id) fetchData();
   }, [store?.id, feedStart, feedEnd, scoreStart, scoreEnd, refreshTrigger]);
 
+  // Pricing map shape:
+  //   pricing[sku] = { cp, sp, shipping, title }                    ← base product (per unit)
+  //   pricing['__pack__<base_sku>__<N>'] = { cp, shipping }         ← owner-defined pack override (totals for the whole pack)
+  // calcPL and ProductPNLModal both look up the __pack__ key when item.packSize > 1 and fall back to the base entry.
   const fetchPricing = async () => {
+    if (!store?.id) return;
     try {
-      const { data, error } = await supabase.from('product_pricing').select('*');
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, sku, title, cost_price, selling_price, shipping_cost, parent_product_id, pack_size')
+        .eq('store_id', store.id);
       if (error) throw error;
+
+      const baseById = new Map();
+      (data || []).forEach(p => { if (!p.parent_product_id) baseById.set(p.id, p); });
+
       const pricing = {};
-      data?.forEach(p => { pricing[p.sku] = { cp: p.cost_price, sp: p.selling_price, shipping: p.shipping_charge, title: p.product_title }; });
+      (data || []).forEach(p => {
+        if (!p.parent_product_id) {
+          if (p.sku) {
+            pricing[p.sku] = {
+              cp: Number(p.cost_price) || 0,
+              sp: Number(p.selling_price) || 0,
+              shipping: Number(p.shipping_cost) || 0,
+              title: p.title,
+            };
+          }
+        } else {
+          // Pack row — index by parent SKU + pack size.
+          const parent = baseById.get(p.parent_product_id);
+          if (parent?.sku && p.pack_size > 1) {
+            pricing[`__pack__${parent.sku}__${p.pack_size}`] = {
+              cp: Number(p.cost_price) || 0,
+              shipping: Number(p.shipping_cost) || 0,
+            };
+          }
+        }
+      });
       setProductPricing(pricing);
     } catch (err) { console.error('Error fetching pricing:', err); }
   };

@@ -176,8 +176,18 @@ export function calcPL(revenue, deliveredCount, adCost, fulfilledCount = 0, item
     items.forEach(item => {
       const lookupKey = item.sku || ('TITLE:' + item.title);
       const pricing = productPricing[lookupKey] || { cp: PRODUCT_COST, shipping: SHIPPING_COST };
-      if (item.isDelivered) totalProductCost += pricing.cp * (item.packSize || 1) * item.quantity;
-      if (item.isFulfilled) totalLogisticsCost += pricing.shipping * item.quantity;
+      const packSize = item.packSize || 1;
+      // Owner-defined pack override: cost is for the whole pack, so don't multiply by packSize again.
+      const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
+      if (item.isDelivered) {
+        totalProductCost += packOverride
+          ? packOverride.cp * item.quantity
+          : pricing.cp * packSize * item.quantity;
+      }
+      if (item.isFulfilled) {
+        const shipPerUnit = packOverride && packOverride.shipping != null ? packOverride.shipping : pricing.shipping;
+        totalLogisticsCost += shipPerUnit * item.quantity;
+      }
     });
     if (totalProductCost === 0 && deliveredCount > 0) totalProductCost = deliveredCount * PRODUCT_COST;
     if (totalLogisticsCost === 0 && (fulfilledCount > 0 || deliveredCount > 0))

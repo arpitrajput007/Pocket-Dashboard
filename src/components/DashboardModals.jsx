@@ -47,11 +47,18 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPrici
         const pricing = pp[lookupKey] || pp['TITLE:' + li.title] ||
           Object.values(pp).find(p => p.title && p.title.toLowerCase() === (li.title||'').toLowerCase()) ||
           null;
+        // Pack override (owner-defined): total cost is for the whole pack, so derive per-unit for display.
+        const packOverride = packSize > 1 ? pp[`__pack__${lookupKey}__${packSize}`] : null;
+        const cpPerUnit = packOverride
+          ? packOverride.cp / packSize
+          : (pricing ? (pricing.cp ?? PRODUCT_COST) : PRODUCT_COST);
+        const shippingPerUnit = packOverride && packOverride.shipping != null
+          ? packOverride.shipping
+          : (pricing ? (pricing.shipping ?? SHIPPING_COST) : SHIPPING_COST);
         productMap[key] = {
           title: li.title || 'Unknown', variantTitle, sku: li.sku || '',
-          pricingFound: !!pricing, qty: 0, revenue: 0, packSize,
-          cpPerUnit: pricing ? (pricing.cp ?? PRODUCT_COST) : PRODUCT_COST,
-          shippingPerUnit: pricing ? (pricing.shipping ?? SHIPPING_COST) : SHIPPING_COST,
+          pricingFound: !!pricing || !!packOverride, qty: 0, revenue: 0, packSize,
+          cpPerUnit, shippingPerUnit, packOverride: !!packOverride,
         };
       }
       productMap[key].qty += parseInt(li.quantity || 1);
