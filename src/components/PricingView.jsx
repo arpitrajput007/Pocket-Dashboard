@@ -9,7 +9,11 @@ import {
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
 
 /* ─── Inline number input ─── */
+// Shows empty when value is 0 so the placeholder "0" is visible and the user
+// can type directly without deleting. Selects all on focus so clicking a
+// non-zero field lets you type over it instantly.
 function PriceInput({ value, onChange, disabled, placeholder, autoFromShopify }) {
+  const display = value === 0 || value == null || Number.isNaN(value) ? '' : value;
   return (
     <div style={{ position: 'relative' }}>
       <span style={{
@@ -18,8 +22,11 @@ function PriceInput({ value, onChange, disabled, placeholder, autoFromShopify })
       }}>₹</span>
       <input
         type="number"
-        value={value ?? ''}
-        onChange={e => onChange(parseFloat(e.target.value) || 0)}
+        value={display}
+        onChange={e => {
+          const v = e.target.value;
+          onChange(v === '' ? 0 : parseFloat(v) || 0);
+        }}
         disabled={disabled}
         placeholder={placeholder || '0'}
         title={autoFromShopify ? 'Auto-fetched from Shopify' : undefined}
@@ -32,10 +39,39 @@ function PriceInput({ value, onChange, disabled, placeholder, autoFromShopify })
           transition: 'border-color 0.2s',
           boxSizing: 'border-box',
         }}
-        onFocus={e => { if (!disabled) e.target.style.borderColor = 'rgba(167,139,250,0.5)'; }}
+        onFocus={e => {
+          if (!disabled) {
+            e.target.style.borderColor = 'rgba(167,139,250,0.5)';
+            // Select all so typing replaces the current value (works on type=number).
+            e.target.select();
+          }
+        }}
         onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
       />
     </div>
+  );
+}
+
+// Plain number input used inside modals — same behaviour, plain style.
+function ModalNumberInput({ value, onChange, placeholder, min }) {
+  const display = value === 0 || value == null || Number.isNaN(value) ? '' : value;
+  return (
+    <input
+      type="number"
+      min={min}
+      value={display}
+      placeholder={placeholder}
+      onChange={e => {
+        const v = e.target.value;
+        onChange(v === '' ? 0 : parseFloat(v) || 0);
+      }}
+      onFocus={e => e.target.select()}
+      style={{
+        width:'100%', padding:'10px 12px', borderRadius:'9px',
+        border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)',
+        color:'white', fontSize:'13px', outline:'none', boxSizing:'border-box',
+      }}
+    />
   );
 }
 
@@ -576,9 +612,18 @@ export default function PricingView({ store }) {
             ].map(f => (
               <div key={f.field} style={{ marginBottom:'14px' }}>
                 <label style={{ fontSize:'12px', fontWeight:600, color:'rgba(255,255,255,0.4)', display:'block', marginBottom:'6px', textTransform:'uppercase', letterSpacing:'0.5px' }}>{f.label}</label>
-                <input type={f.type} value={newProduct[f.field]} placeholder={f.placeholder}
-                  onChange={e=>setNewProduct(p=>({...p,[f.field]:f.type==='number'?parseFloat(e.target.value)||0:e.target.value}))}
-                  style={{ width:'100%', padding:'10px 12px', borderRadius:'9px', border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:'13px', outline:'none', boxSizing:'border-box' }}/>
+                {f.type === 'number' ? (
+                  <ModalNumberInput
+                    value={newProduct[f.field]}
+                    placeholder={f.placeholder}
+                    onChange={v => setNewProduct(p => ({ ...p, [f.field]: v }))}
+                  />
+                ) : (
+                  <input type={f.type} value={newProduct[f.field]} placeholder={f.placeholder}
+                    onChange={e=>setNewProduct(p=>({...p,[f.field]:e.target.value}))}
+                    onFocus={e=>e.target.select()}
+                    style={{ width:'100%', padding:'10px 12px', borderRadius:'9px', border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:'13px', outline:'none', boxSizing:'border-box' }}/>
+                )}
               </div>
             ))}
             <div style={{ display:'flex', gap:'10px', marginTop:'20px' }}>
@@ -617,8 +662,12 @@ export default function PricingView({ store }) {
                     Pack of {n}
                   </button>
                 ))}
-                <input type="number" min={2} value={packModal.pack_size}
-                  onChange={e=>setPackModal(m=>({ ...m, pack_size: parseInt(e.target.value) || 2 }))}
+                <input type="number" min={2} value={packModal.pack_size === 0 ? '' : packModal.pack_size}
+                  onChange={e=>{
+                    const v = e.target.value;
+                    setPackModal(m => ({ ...m, pack_size: v === '' ? 0 : parseInt(v) || 0 }));
+                  }}
+                  onFocus={e=>e.target.select()}
                   style={{ width:80, padding:'8px 10px', borderRadius:9, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:13, outline:'none' }}
                   placeholder="Custom"/>
               </div>
@@ -631,9 +680,11 @@ export default function PricingView({ store }) {
             ].map(f => (
               <div key={f.field} style={{ marginBottom:'14px' }}>
                 <label style={{ fontSize:'12px', fontWeight:600, color:'rgba(255,255,255,0.4)', display:'block', marginBottom:'6px', textTransform:'uppercase', letterSpacing:'0.5px' }}>{f.label}</label>
-                <input type="number" value={packModal[f.field]} placeholder={f.placeholder}
-                  onChange={e=>setPackModal(m=>({ ...m, [f.field]: parseFloat(e.target.value) || 0 }))}
-                  style={{ width:'100%', padding:'10px 12px', borderRadius:'9px', border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:'13px', outline:'none', boxSizing:'border-box' }}/>
+                <ModalNumberInput
+                  value={packModal[f.field]}
+                  placeholder={f.placeholder}
+                  onChange={v => setPackModal(m => ({ ...m, [f.field]: v }))}
+                />
               </div>
             ))}
 
