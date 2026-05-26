@@ -4,7 +4,7 @@ const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { OpenAI } = require('openai');
 const { syncStoreData } = require('./syncService');
-const { encrypt } = require('./cryptoUtils');
+const { encrypt, decrypt } = require('./cryptoUtils');
 
 const VITE_SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://missing.supabase.co';
 // Use the Service Role Key on the server — this bypasses RLS safely
@@ -453,6 +453,132 @@ app.post('/api/sync/:storeId', async (req, res) => {
     res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced, mode: result.mode });
   } catch (err) {
     console.error(`[Sync API] ❌ Failed for ${storeId}:`, err.message);
+    res.status(500).json({ status: 'sync_failed', error: err.message });
+  }
+});
+
+/**
+ * POST /api/sync-products/:storeId
+ * Pulls the catalog (products + first variant/image) from Shopify into Supabase.
+ * Preserves cost_price the owner has entered — sync only refreshes
+ * title/sku/selling_price/status/image_url.
+ * Owner-created pack rows (parent_product_id IS NOT NULL) are left untouched.
+ */
+app.post('/api/sync-products/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  if (!storeId) return res.status(400).json({ error: 'storeId is required' });
+
+  console.log(`[ProductSync] ▶ Triggered for store: ${storeId}`);
+  try {
+    // 1. Load credentials (mirrors syncService pattern).
+    const { data: store, error: storeErr } = await supabase
+      .from('stores')
+      .select('shopify_domain, shopify_access_token, shopify_client_id')
+      .eq('id', storeId)
+      .single();
+    if (storeErr || !store) throw new Error(`Store not found: ${storeErr?.message}`);
+
+    const accessToken = decrypt(store.shopify_access_token);
+    const clientId = store.shopify_client_id ? decrypt(store.shopify_client_id) : null;
+
+    // shpss_ exchange (same as orders sync)
+    let finalToken = accessToken;
+    if (clientId && accessToken && accessToken.startsWith('shpss_')) {
+      const body = new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: accessToken });
+      try {
+        const r = await fetch(`https://${store.shopify_domain}.myshopify.com/admin/oauth/access_token`, {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+        });
+        if (r.ok) {
+          const j = await r.json();
+          if (j.access_token) finalToken = j.access_token;
+        }
+      } catch (e) { console.warn('[ProductSync] Token exchange failed:', e.message); }
+    }
+
+    const headers = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': finalToken };
+
+    // 2. Existing cost_prices keyed by shopify_product_id (so we don't overwrite them).
+    const { data: existing } = await supabase
+      .from('products')
+      .select('shopify_product_id, cost_price')
+      .eq('store_id', storeId)
+      .is('parent_product_id', null);
+    const costMap = new Map((existing || []).map(p => [p.shopify_product_id, p.cost_price]));
+
+    // 3. Paginate Shopify Products API.
+    let url = `https://${store.shopify_domain}.myshopify.com/admin/api/2024-01/products.json?limit=250`;
+    let totalSynced = 0;
+    const seenIds = new Set();
+
+    while (url) {
+      const r = await fetch(url, { method: 'GET', headers });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`Shopify products API error (${r.status}): ${txt.substring(0, 300)}`);
+      }
+      const body = await r.json();
+      const products = body.products || [];
+      if (products.length === 0) break;
+
+      const rows = products.map(p => {
+        const firstVariant = (p.variants && p.variants[0]) || {};
+        const firstImage = (p.images && p.images[0]) || {};
+        const shopifyId = String(p.id);
+        seenIds.add(shopifyId);
+        return {
+          store_id: storeId,
+          shopify_product_id: shopifyId,
+          title: p.title || 'Untitled',
+          sku: firstVariant.sku || '',
+          selling_price: parseFloat(firstVariant.price || 0),
+          // Preserve owner's cost_price; default 0 for new rows.
+          cost_price: costMap.has(shopifyId) ? costMap.get(shopifyId) : 0,
+          status: p.status || 'active',
+          image_url: firstImage.src || null,
+          parent_product_id: null,
+          pack_size: null,
+        };
+      });
+
+      const { error: upErr } = await supabase
+        .from('products')
+        .upsert(rows, { onConflict: 'store_id,shopify_product_id' });
+      if (upErr) throw new Error(`Upsert failed: ${upErr.message}`);
+
+      totalSynced += rows.length;
+      const link = r.headers.get('Link');
+      const next = link ? link.match(/<([^>]+)>;\s*rel="next"/) : null;
+      url = next ? next[1] : null;
+    }
+
+    // 4. Mark products that disappeared from Shopify as archived (don't delete — they may
+    //    still appear in historical orders, and the owner may have pack rows hanging off them).
+    if (seenIds.size > 0) {
+      const { data: storedBases } = await supabase
+        .from('products')
+        .select('shopify_product_id')
+        .eq('store_id', storeId)
+        .is('parent_product_id', null);
+      const stale = (storedBases || [])
+        .map(p => p.shopify_product_id)
+        .filter(id => !id.startsWith('custom_') && !seenIds.has(id));
+      if (stale.length > 0) {
+        await supabase
+          .from('products')
+          .update({ status: 'archived' })
+          .eq('store_id', storeId)
+          .in('shopify_product_id', stale);
+        console.log(`[ProductSync] Marked ${stale.length} missing products as archived`);
+      }
+    }
+
+    await supabase.from('stores').update({ products_synced_at: new Date().toISOString() }).eq('id', storeId);
+
+    console.log(`[ProductSync] ✅ Done. Synced ${totalSynced} products for store ${storeId}`);
+    res.json({ status: 'sync_complete', storeId, totalSynced });
+  } catch (err) {
+    console.error(`[ProductSync] ❌ Failed for ${storeId}:`, err.message);
     res.status(500).json({ status: 'sync_failed', error: err.message });
   }
 });
