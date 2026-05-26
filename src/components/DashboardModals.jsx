@@ -27,10 +27,16 @@ function MetricCard({ label, value, color, glow, onClick, active, note, badge })
 }
 
 // ── ProductPNLModal ────────────────────────────────────────────────────────
-function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, productPricing, onClose }) {
+function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, adProductBreakdown, productPricing, onClose }) {
   const dayAd = adCosts[dateStr] || 0;
-  const dailyProductAdCosts = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
-  const dayAdSplits = dailyProductAdCosts[dateStr] || {};
+  // Prefer DB-synced per-product breakdown; fall back to legacy localStorage for un-migrated dates.
+  let dayAdSplits = adProductBreakdown && typeof adProductBreakdown === 'object' ? adProductBreakdown : null;
+  if (!dayAdSplits || Object.keys(dayAdSplits).length === 0) {
+    try {
+      const legacy = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
+      dayAdSplits = legacy[dateStr] || {};
+    } catch { dayAdSplits = {}; }
+  }
 
   const productMap = {};
   dayOrders.forEach(o => {
@@ -156,7 +162,7 @@ const PLATFORM_LIST = [
   { key: 'other', label: 'Other', color: '#9ca3af' },
 ];
 
-function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
+function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakdown, onSave, onClose }) {
   const currentTotal = adCosts[dateStr] || 0;
   const [breakdown, setBreakdown] = useState({ meta: 0, google: 0, youtube: 0, tiktok: 0, other: 0 });
   const [breakdownLoaded, setBreakdownLoaded] = useState(false);
@@ -167,8 +173,15 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
-  const dailyProductAdCosts = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
-  const [splits, setSplits] = useState(dailyProductAdCosts[dateStr] || {});
+  // Per-product splits: prefer DB value, fall back to legacy localStorage so owners
+  // who entered data before this migration don't see it disappear on first open.
+  const [splits, setSplits] = useState(() => {
+    if (initialProductBreakdown && Object.keys(initialProductBreakdown).length > 0) return initialProductBreakdown;
+    try {
+      const legacy = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
+      return legacy[dateStr] || {};
+    } catch { return {}; }
+  });
 
   const products = [...new Set(dayOrders.flatMap(o => (o.line_items||[]).map(li => li.title)).filter(Boolean))];
   const prettyDate = parseDateStr(dateStr).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
@@ -245,17 +258,26 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, onSave, onClose }) {
   };
 
   const handleSave = async () => {
-    // Persist per-product breakdown to localStorage (existing behaviour)
-    const newDPC = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
-    newDPC[dateStr] = {};
-    Object.entries(splits).forEach(([k,v]) => { if (v > 0) newDPC[dateStr][k] = v; });
-    localStorage.setItem('dailyProductAdCosts', JSON.stringify(newDPC));
+    // Build the cleaned per-product splits (only positive values).
+    const cleanSplits = {};
+    Object.entries(splits).forEach(([k, v]) => { if (v > 0) cleanSplits[k] = Number(v); });
 
-    // Save total + per-platform breakdown to ad_costs
+    // Build per-platform breakdown
     const cleanBreakdown = {};
     Object.entries(breakdown).forEach(([k, v]) => { if (v > 0) cleanBreakdown[k] = Number(v); });
+
     const source = lastExtracted ? 'screenshot_ocr' : 'manual';
-    await onSave(dateStr, total, cleanBreakdown, source);
+    await onSave(dateStr, total, cleanBreakdown, source, cleanSplits);
+
+    // Clean up legacy localStorage entry for this date — data is now in DB.
+    try {
+      const legacy = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
+      if (legacy[dateStr]) {
+        delete legacy[dateStr];
+        localStorage.setItem('dailyProductAdCosts', JSON.stringify(legacy));
+      }
+    } catch {}
+
     onClose();
   };
 

@@ -15,6 +15,8 @@ const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); retur
 export default function DailyDashboard({ store, refreshTrigger }) {
   const [orders, setOrders] = useState([]);
   const [adCosts, setAdCosts] = useState({});
+  // Per-product ad-spend splits keyed by date. Synced via ad_costs.product_breakdown.
+  const [adProductBreakdowns, setAdProductBreakdowns] = useState({});
   const [productPricing, setProductPricing] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -122,20 +124,31 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       setOrders(allOrders);
       dashboardCache.set(ordersCacheKey, allOrders);
 
-      const { data: adData } = await supabase.from('ad_costs').select('date, amount')
+      const { data: adData } = await supabase.from('ad_costs').select('date, amount, product_breakdown')
         .eq('store_id', store.id).gte('date', minD).lte('date', maxD);
       const newAdCosts = {};
-      adData?.forEach(r => newAdCosts[r.date] = r.amount);
+      const newProductBreakdowns = {};
+      adData?.forEach(r => {
+        newAdCosts[r.date] = r.amount;
+        if (r.product_breakdown && typeof r.product_breakdown === 'object' && Object.keys(r.product_breakdown).length > 0) {
+          newProductBreakdowns[r.date] = r.product_breakdown;
+        }
+      });
       setAdCosts(newAdCosts);
+      setAdProductBreakdowns(newProductBreakdowns);
       dashboardCache.set(adCacheKey, newAdCosts);
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
 
-  const handleSaveAdCost = async (dateStr, total, breakdown = null, source = 'manual') => {
+  const handleSaveAdCost = async (dateStr, total, breakdown = null, source = 'manual', productBreakdown = null) => {
     setAdCosts(prev => ({ ...prev, [dateStr]: total }));
+    if (productBreakdown) {
+      setAdProductBreakdowns(prev => ({ ...prev, [dateStr]: productBreakdown }));
+    }
     const row = { date: dateStr, amount: total, store_id: store.id, source };
     if (breakdown) row.breakdown = breakdown;
+    if (productBreakdown) row.product_breakdown = productBreakdown;
     await supabase.from('ad_costs').upsert(row, { onConflict: 'date,store_id' });
   };
 
@@ -413,8 +426,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
         })}
       </div>
 
-      {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
-      {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} adProductBreakdown={adProductBreakdowns[modalState.date]} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} initialProductBreakdown={adProductBreakdowns[modalState.date]} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} onClose={() => setModalState({ type: null })} />}
     </div>
