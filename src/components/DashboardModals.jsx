@@ -614,110 +614,165 @@ function InventoryPicker({ options, onPick }) {
   );
 }
 // ── NetProfitModal ──────────────────────────────────────────────────────────
-function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, itemsCount = 0, cpp = 0, totalOrders = 0, onClose }) {
-  const isProfit = pl.profit >= 0;
-  const margin = pl.revenue > 0 ? ((pl.profit / pl.revenue) * 100).toFixed(1) : '0.0';
-  const roas = pl.adCost > 0 ? (pl.revenue / pl.adCost).toFixed(2) : '—';
-  const marginColor = parseFloat(margin) >= 0 ? 'var(--profit-color)' : 'var(--loss-color)';
+function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, itemsCount = 0, cpp = 0, totalOrders = 0, revBreakdown = {}, grossSales = 0, allItems = [], productPricing = {}, onClose }) {
+  // Per-product COGS from delivered items
+  const cogsMap = {};
+  allItems.filter(item => item.isDelivered).forEach(item => {
+    const lookupKey = item.sku || ('TITLE:' + item.title);
+    const pricing = productPricing[lookupKey] || { cp: PRODUCT_COST };
+    const packSize = item.packSize || 1;
+    const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
+    const costPerUnit = packOverride ? packOverride.cp : pricing.cp * packSize;
+    const qty = parseInt(item.quantity || 1);
+    const key = item.title || 'Unknown';
+    if (!cogsMap[key]) cogsMap[key] = { title: key, units: 0, costPerUnit, total: 0 };
+    cogsMap[key].units += qty;
+    cogsMap[key].total += costPerUnit * qty;
+  });
+  const cogsRows = Object.values(cogsMap);
+  const revenueUnits = allItems.filter(i => i.isDelivered).reduce((s, i) => s + parseInt(i.quantity || 1), 0);
+  const revenueOrderCount = (revBreakdown.deliveredCount || 0) + (revBreakdown.prepaidCount || 0);
 
-  const divider = (
-    <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)', margin: '14px 0' }} />
+  const grossProfit = pl.revenue - pl.productCost;
+  const grossMargin = pl.revenue > 0 ? ((grossProfit / pl.revenue) * 100).toFixed(1) : '0.0';
+  const netMargin = pl.revenue > 0 ? ((pl.profit / pl.revenue) * 100).toFixed(1) : '0.0';
+  const roas = pl.adCost > 0 ? (pl.revenue / pl.adCost).toFixed(2) : null;
+  const isProfit = pl.profit >= 0;
+
+  const SectionHeader = ({ label, total, totalColor }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+      <span style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>{label}</span>
+      {total !== undefined && <span style={{ color: totalColor || 'var(--text-main)', fontSize: 14, fontWeight: 700 }}>{total}</span>}
+    </div>
   );
 
-  const Row = ({ label, value, valueColor, large, dimLabel }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: large ? 0 : 12 }}>
-      <span style={{ color: dimLabel ? 'var(--text-muted)' : 'var(--text-main)', fontSize: large ? 15 : 13 }}>{label}</span>
-      <span style={{ color: valueColor || 'var(--text-main)', fontSize: large ? 15 : 13, fontWeight: large ? 600 : 500 }}>{value}</span>
+  const Row = ({ label, sub, value, valueColor }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: sub ? 'flex-start' : 'center', marginBottom: 12 }}>
+      <div>
+        <div style={{ color: 'var(--text-main)', fontSize: 14 }}>{label}</div>
+        {sub && <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>{sub}</div>}
+      </div>
+      <span style={{ color: valueColor || 'var(--text-main)', fontSize: 14, fontWeight: 600, flexShrink: 0, marginLeft: 12 }}>{value}</span>
+    </div>
+  );
+
+  const card = (children, mb = 12) => (
+    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '16px 18px', marginBottom: mb }}>
+      {children}
     </div>
   );
 
   return (
     <div className="modal-overlay active" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 440, padding: '28px 24px', maxHeight: '90vh', overflowY: 'auto' }}>
+      <div className="modal" style={{ maxWidth: 460, padding: '24px 20px 20px', maxHeight: '92vh', overflowY: 'auto' }}>
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 22 }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>{isProfit ? '💰' : '📉'}</div>
-          <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>Net Profit Breakdown</h2>
-          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>{prettyDate}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700 }}>Net Profit Breakdown</h2>
+            <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>{prettyDate}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 22, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
         </div>
 
-        {/* Net Profit Hero */}
-        <div style={{
-          background: isProfit ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
-          border: `1px solid ${isProfit ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
-          borderRadius: 12, padding: '16px 20px', marginBottom: 16, textAlign: 'center',
-          boxShadow: `0 0 20px ${isProfit ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)'}`
-        }}>
-          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Net Profit</div>
-          <div style={{ color: isProfit ? 'var(--profit-color)' : 'var(--loss-color)', fontSize: 32, fontWeight: 800, lineHeight: 1 }}>
-            {isProfit ? '+' : '-'}{fmt(Math.abs(pl.profit))}
-          </div>
-          <div style={{ color: marginColor, fontSize: 13, marginTop: 6 }}>Margin: {margin}%</div>
-        </div>
+        {/* REVENUE */}
+        {card(<>
+          <SectionHeader label="Revenue" total={fmt(pl.revenue)} totalColor="var(--profit-color)" />
+          <Row
+            label="Delivered COD"
+            sub={`${revBreakdown.deliveredCount || 0} orders · cash collected at delivery`}
+            value={fmt(revBreakdown.deliveredRevenue || 0)}
+            valueColor="var(--profit-color)"
+          />
+          <Row
+            label="Prepaid Online"
+            sub={`${revBreakdown.prepaidCount || 0} orders · paid upfront (may include discount)`}
+            value={fmt(revBreakdown.prepaidRevenue || 0)}
+            valueColor="var(--profit-color)"
+          />
+          <Row
+            label="Shopify Gross Sales"
+            sub="all orders placed, incl. pending / canceled / RTO"
+            value={fmt(grossSales)}
+          />
+        </>)}
 
-        {/* Order Stats */}
-        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Orders</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, textAlign: 'center' }}>
-            {[
-              { label: 'Total', value: totalOrders, color: 'var(--text-main)' },
-              { label: 'Delivered', value: tCounts['Delivered'] || 0, color: 'var(--profit-color)' },
-              { label: 'Fulfilled', value: tCounts['Fulfilled'] || 0, color: 'var(--profit-color)' },
-              { label: 'In Transit', value: tCounts['In Transit'] || 0, color: '#60a5fa' },
-              { label: 'RTO', value: tCounts['RTO'] || 0, color: 'var(--loss-color)' },
-              { label: 'Canceled', value: tCounts['Canceled'] || 0, color: 'var(--loss-color)' },
-            ].map(({ label, value, color }) => (
-              <div key={label} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '8px 4px' }}>
-                <div style={{ color, fontSize: 16, fontWeight: 700 }}>{value}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{label}</div>
-              </div>
-            ))}
-          </div>
-          {(pCounts.prepaid > 0 || pCounts.cash > 0) && (
-            <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-              <div style={{ flex: 1, background: 'rgba(129,140,248,0.1)', border: '1px solid rgba(129,140,248,0.2)', borderRadius: 8, padding: '7px 10px', textAlign: 'center' }}>
-                <div style={{ color: '#818cf8', fontSize: 15, fontWeight: 700 }}>{pCounts.prepaid || 0}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Prepaid</div>
-              </div>
-              <div style={{ flex: 1, background: 'rgba(251,146,60,0.1)', border: '1px solid rgba(251,146,60,0.2)', borderRadius: 8, padding: '7px 10px', textAlign: 'center' }}>
-                <div style={{ color: '#fb923c', fontSize: 15, fontWeight: 700 }}>{pCounts.cash || 0}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Cash (COD)</div>
-              </div>
-              <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '7px 10px', textAlign: 'center' }}>
-                <div style={{ color: '#a78bfa', fontSize: 15, fontWeight: 700 }}>{itemsCount}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Items Sold</div>
-              </div>
+        {/* COGS */}
+        {card(<>
+          <SectionHeader label="Cost of Goods Sold (COGS)" total={`– ${fmt(pl.productCost)}`} totalColor="var(--loss-color)" />
+          {cogsRows.length > 0 ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginBottom: 12 }}>
+              <thead>
+                <tr style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  <th style={{ textAlign: 'left', paddingBottom: 8, fontWeight: 600 }}>Product</th>
+                  <th style={{ textAlign: 'right', paddingBottom: 8, fontWeight: 600 }}>Units</th>
+                  <th style={{ textAlign: 'right', paddingBottom: 8, fontWeight: 600 }}>Cost/Unit</th>
+                  <th style={{ textAlign: 'right', paddingBottom: 8, fontWeight: 600 }}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cogsRows.map(row => (
+                  <tr key={row.title}>
+                    <td style={{ paddingBottom: 10, color: 'var(--text-main)', maxWidth: 140 }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>{row.title}</div>
+                    </td>
+                    <td style={{ textAlign: 'right', paddingBottom: 10, color: '#f59e0b', fontWeight: 600 }}>{row.units} units</td>
+                    <td style={{ textAlign: 'right', paddingBottom: 10, color: 'var(--text-muted)' }}>{fmt(row.costPerUnit)}</td>
+                    <td style={{ textAlign: 'right', paddingBottom: 10, color: 'var(--loss-color)', fontWeight: 600 }}>{fmt(row.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>No delivered items with cost data.</div>
+          )}
+          {revenueUnits > 0 && (
+            <div style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
+              <span style={{ color: '#f59e0b', marginRight: 6 }}>ⓘ</span>
+              <strong style={{ color: 'var(--text-main)' }}>{revenueUnits} product unit{revenueUnits !== 1 ? 's' : ''} from {revenueOrderCount} revenue order{revenueOrderCount !== 1 ? 's' : ''}</strong>
+              <div style={{ marginTop: 4 }}>Sale prices vary per customer (discounts, express delivery etc.) but cost/unit is fixed in your Pricing table.</div>
             </div>
           )}
-        </div>
+        </>)}
 
-        {/* P&L Breakdown */}
-        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
-          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>P&L Breakdown</div>
-          <Row label="Total Revenue" value={fmt(pl.revenue)} valueColor="var(--profit-color)" large />
-          {divider}
-          <Row label="Product Cost" value={`- ${fmt(pl.productCost)}`} valueColor="var(--loss-color)" dimLabel />
-          <Row label="Shipping / Logistics" value={`- ${fmt(pl.shippingCost)}`} valueColor="var(--loss-color)" dimLabel />
-          <Row label="Ad Spend" value={`- ${fmt(pl.adCost)}`} valueColor="var(--loss-color)" dimLabel />
-          {divider}
-          <Row label="Total Cost" value={`- ${fmt(pl.totalCost)}`} valueColor="var(--loss-color)" large />
-        </div>
-
-        {/* Performance Metrics */}
-        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
-          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Performance</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, textAlign: 'center' }}>
-            {[
-              { label: 'Margin', value: `${margin}%`, color: marginColor },
-              { label: 'ROAS', value: roas === '—' ? '—' : `${roas}x`, color: parseFloat(roas) >= 1 ? 'var(--profit-color)' : 'var(--loss-color)' },
-              { label: 'CPP', value: itemsCount > 0 ? fmt(cpp) : '₹0', color: '#a78bfa' },
-            ].map(({ label, value, color }) => (
-              <div key={label} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '10px 4px' }}>
-                <div style={{ color, fontSize: 17, fontWeight: 700 }}>{value}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{label}</div>
-              </div>
-            ))}
+        {/* Gross Profit */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 18px', marginBottom: 12, borderTop: '1px solid rgba(255,255,255,0.08)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>Gross Profit</span>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: grossProfit >= 0 ? 'var(--profit-color)' : 'var(--loss-color)', fontSize: 18, fontWeight: 700 }}>{fmt(grossProfit)}</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>Gross Margin: {grossMargin}%</div>
           </div>
+        </div>
+
+        {/* Operating Expenses */}
+        {card(<>
+          <SectionHeader label="Operating Expenses" total={`– ${fmt(pl.shippingCost + pl.adCost)}`} totalColor="var(--loss-color)" />
+          <Row
+            label="Shipping & Logistics"
+            sub={`${pl.fulfilledCount || 0} fulfilled orders × avg courier rate`}
+            value={`– ${fmt(pl.shippingCost)}`}
+            valueColor="var(--loss-color)"
+          />
+          <Row
+            label="Marketing / Ad Spend"
+            sub="paid campaigns attributed to this period"
+            value={`– ${fmt(pl.adCost)}`}
+            valueColor={pl.adCost > 0 ? 'var(--loss-color)' : 'var(--text-muted)'}
+          />
+          {roas && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -4 }}>
+              <span style={{ fontSize: 12, color: parseFloat(roas) >= 1 ? 'var(--profit-color)' : 'var(--loss-color)' }}>ROAS: {roas}x</span>
+            </div>
+          )}
+        </>)}
+
+        {/* Net Profit */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 18px', background: isProfit ? 'rgba(52,211,153,0.06)' : 'rgba(248,113,113,0.06)', border: `1px solid ${isProfit ? 'rgba(52,211,153,0.2)' : 'rgba(248,113,113,0.2)'}`, borderRadius: 12, marginBottom: 8 }}>
+          <span style={{ fontSize: 17, fontWeight: 700 }}>Net Profit</span>
+          <span style={{ color: isProfit ? 'var(--profit-color)' : 'var(--loss-color)', fontSize: 20, fontWeight: 800 }}>{isProfit ? '' : '–'}{fmt(Math.abs(pl.profit))}</span>
+        </div>
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, marginBottom: 20 }}>
+          Net Margin: <strong style={{ color: parseFloat(netMargin) >= 0 ? 'var(--profit-color)' : 'var(--loss-color)' }}>{netMargin}%</strong>
+          &nbsp; · &nbsp;Revenue – COGS – Shipping – Marketing
         </div>
 
         <button onClick={onClose} className="primary" style={{ width: '100%', padding: '13px', fontSize: 15, borderRadius: 10, fontWeight: 600 }}>Close Breakdown</button>
