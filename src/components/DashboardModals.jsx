@@ -614,59 +614,113 @@ function InventoryPicker({ options, onPick }) {
   );
 }
 // ── NetProfitModal ──────────────────────────────────────────────────────────
-function NetProfitModal({ dateStr, prettyDate, pl, onClose }) {
+function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, itemsCount = 0, cpp = 0, totalOrders = 0, onClose }) {
   const isProfit = pl.profit >= 0;
-  
+  const margin = pl.revenue > 0 ? ((pl.profit / pl.revenue) * 100).toFixed(1) : '0.0';
+  const roas = pl.adCost > 0 ? (pl.revenue / pl.adCost).toFixed(2) : '—';
+  const marginColor = parseFloat(margin) >= 0 ? 'var(--profit-color)' : 'var(--loss-color)';
+
+  const divider = (
+    <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)', margin: '14px 0' }} />
+  );
+
+  const Row = ({ label, value, valueColor, large, dimLabel }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: large ? 0 : 12 }}>
+      <span style={{ color: dimLabel ? 'var(--text-muted)' : 'var(--text-main)', fontSize: large ? 15 : 13 }}>{label}</span>
+      <span style={{ color: valueColor || 'var(--text-main)', fontSize: large ? 15 : 13, fontWeight: large ? 600 : 500 }}>{value}</span>
+    </div>
+  );
+
   return (
-    <div className="modal-overlay active" onClick={e => e.target===e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 420, padding: '32px 24px' }}>
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>{isProfit ? '💰' : '📉'}</div>
-          <h2 style={{ margin: '0 0 6px', fontSize: 22 }}>Net Profit Breakdown</h2>
-          <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>{prettyDate}</div>
+    <div className="modal-overlay active" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 440, padding: '28px 24px', maxHeight: '90vh', overflowY: 'auto' }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: 22 }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>{isProfit ? '💰' : '📉'}</div>
+          <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>Net Profit Breakdown</h2>
+          <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>{prettyDate}</div>
         </div>
-        
-        <div style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: 24, marginBottom: 28, boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.2)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
-            <span style={{ color: 'var(--text-main)', fontSize: 15, fontWeight: 500 }}>Total Revenue</span>
-            <span style={{ color: 'var(--profit-color)', fontSize: 16, fontWeight: 600 }}>{fmt(pl.revenue)}</span>
+
+        {/* Net Profit Hero */}
+        <div style={{
+          background: isProfit ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
+          border: `1px solid ${isProfit ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
+          borderRadius: 12, padding: '16px 20px', marginBottom: 16, textAlign: 'center',
+          boxShadow: `0 0 20px ${isProfit ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)'}`
+        }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Net Profit</div>
+          <div style={{ color: isProfit ? 'var(--profit-color)' : 'var(--loss-color)', fontSize: 32, fontWeight: 800, lineHeight: 1 }}>
+            {isProfit ? '+' : '-'}{fmt(Math.abs(pl.profit))}
           </div>
-          
-          <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)', margin: '16px 0' }}></div>
-          
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>Product Cost</span>
-            <span style={{ color: 'var(--loss-color)', fontSize: 14, fontWeight: 500 }}>- {fmt(pl.productCost)}</span>
+          <div style={{ color: marginColor, fontSize: 13, marginTop: 6 }}>Margin: {margin}%</div>
+        </div>
+
+        {/* Order Stats */}
+        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Orders</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, textAlign: 'center' }}>
+            {[
+              { label: 'Total', value: totalOrders, color: 'var(--text-main)' },
+              { label: 'Delivered', value: tCounts['Delivered'] || 0, color: 'var(--profit-color)' },
+              { label: 'Fulfilled', value: tCounts['Fulfilled'] || 0, color: 'var(--profit-color)' },
+              { label: 'In Transit', value: tCounts['In Transit'] || 0, color: '#60a5fa' },
+              { label: 'RTO', value: tCounts['RTO'] || 0, color: 'var(--loss-color)' },
+              { label: 'Canceled', value: tCounts['Canceled'] || 0, color: 'var(--loss-color)' },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '8px 4px' }}>
+                <div style={{ color, fontSize: 16, fontWeight: 700 }}>{value}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{label}</div>
+              </div>
+            ))}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>Shipping Cost</span>
-            <span style={{ color: 'var(--loss-color)', fontSize: 14, fontWeight: 500 }}>- {fmt(pl.shippingCost)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>Ad Spend</span>
-            <span style={{ color: 'var(--loss-color)', fontSize: 14, fontWeight: 500 }}>- {fmt(pl.adCost)}</span>
-          </div>
-          
-          <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)', margin: '16px 0' }}></div>
-          
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-            <span style={{ color: 'var(--text-main)', fontSize: 16, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>Net Profit</span>
-            <div style={{ 
-              background: isProfit ? 'rgba(52, 211, 153, 0.15)' : 'rgba(248, 113, 113, 0.15)',
-              border: `1px solid ${isProfit ? 'rgba(52, 211, 153, 0.3)' : 'rgba(248, 113, 113, 0.3)'}`,
-              padding: '6px 14px',
-              borderRadius: 8,
-              color: isProfit ? 'var(--profit-color)' : 'var(--loss-color)',
-              fontSize: 20,
-              fontWeight: 700,
-              boxShadow: `0 0 15px ${isProfit ? 'rgba(52, 211, 153, 0.2)' : 'rgba(248, 113, 113, 0.2)'}`
-            }}>
-              {isProfit ? '+' : '-'}{fmt(Math.abs(pl.profit))}
+          {(pCounts.prepaid > 0 || pCounts.cash > 0) && (
+            <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+              <div style={{ flex: 1, background: 'rgba(129,140,248,0.1)', border: '1px solid rgba(129,140,248,0.2)', borderRadius: 8, padding: '7px 10px', textAlign: 'center' }}>
+                <div style={{ color: '#818cf8', fontSize: 15, fontWeight: 700 }}>{pCounts.prepaid || 0}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Prepaid</div>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(251,146,60,0.1)', border: '1px solid rgba(251,146,60,0.2)', borderRadius: 8, padding: '7px 10px', textAlign: 'center' }}>
+                <div style={{ color: '#fb923c', fontSize: 15, fontWeight: 700 }}>{pCounts.cash || 0}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Cash (COD)</div>
+              </div>
+              <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '7px 10px', textAlign: 'center' }}>
+                <div style={{ color: '#a78bfa', fontSize: 15, fontWeight: 700 }}>{itemsCount}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Items Sold</div>
+              </div>
             </div>
+          )}
+        </div>
+
+        {/* P&L Breakdown */}
+        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '16px 18px', marginBottom: 12 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>P&L Breakdown</div>
+          <Row label="Total Revenue" value={fmt(pl.revenue)} valueColor="var(--profit-color)" large />
+          {divider}
+          <Row label="Product Cost" value={`- ${fmt(pl.productCost)}`} valueColor="var(--loss-color)" dimLabel />
+          <Row label="Shipping / Logistics" value={`- ${fmt(pl.shippingCost)}`} valueColor="var(--loss-color)" dimLabel />
+          <Row label="Ad Spend" value={`- ${fmt(pl.adCost)}`} valueColor="var(--loss-color)" dimLabel />
+          {divider}
+          <Row label="Total Cost" value={`- ${fmt(pl.totalCost)}`} valueColor="var(--loss-color)" large />
+        </div>
+
+        {/* Performance Metrics */}
+        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Performance</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, textAlign: 'center' }}>
+            {[
+              { label: 'Margin', value: `${margin}%`, color: marginColor },
+              { label: 'ROAS', value: roas === '—' ? '—' : `${roas}x`, color: parseFloat(roas) >= 1 ? 'var(--profit-color)' : 'var(--loss-color)' },
+              { label: 'CPP', value: itemsCount > 0 ? fmt(cpp) : '₹0', color: '#a78bfa' },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '10px 4px' }}>
+                <div style={{ color, fontSize: 17, fontWeight: 700 }}>{value}</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{label}</div>
+              </div>
+            ))}
           </div>
         </div>
-        
-        <button onClick={onClose} className="primary" style={{ width: '100%', padding: '14px', fontSize: 15, borderRadius: 10, fontWeight: 600 }}>Close Breakdown</button>
+
+        <button onClick={onClose} className="primary" style={{ width: '100%', padding: '13px', fontSize: 15, borderRadius: 10, fontWeight: 600 }}>Close Breakdown</button>
       </div>
     </div>
   );
