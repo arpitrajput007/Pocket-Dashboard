@@ -352,11 +352,11 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
 
     return (
       <div className="modal-overlay active" onClick={e => e.target===e.currentTarget && onClose()}>
-        <div className="modal" style={{ maxWidth:520 }}>
+        <div className="modal" style={{ maxWidth:520, overflow:'hidden' }}>
           <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:6 }}>
-            <button onClick={() => setDrilldown(null)} style={{ background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.7)',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:12 }}>← Back</button>
-            <div style={{ width:10,height:10,borderRadius:'50%',background:platform.color }}/>
-            <h2 style={{ margin:0,fontSize:18 }}>{platform.label} — {prettyDate}</h2>
+            <button onClick={() => setDrilldown(null)} style={{ background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.7)',borderRadius:8,padding:'5px 12px',cursor:'pointer',fontSize:12,flexShrink:0 }}>← Back</button>
+            <div style={{ width:10,height:10,borderRadius:'50%',background:platform.color,flexShrink:0 }}/>
+            <h2 style={{ margin:0,fontSize:17,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{platform.label} — {prettyDate}</h2>
           </div>
           <p style={{ color:'var(--text-muted)',fontSize:13,marginBottom:16 }}>
             Split your {platform.label} spend across products. Pick from inventory to add products that didn't receive orders today.
@@ -572,23 +572,44 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
 function InventoryPicker({ options, onPick }) {
   const [value, setValue] = useState('');
   return (
-    <div style={{ display:'flex',gap:8,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)' }}>
-      <select
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        style={{ flex:1,padding:'10px 12px',background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,outline:'none',fontSize:13 }}
-      >
-        <option value="">+ Pick product from inventory</option>
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
-      <button
-        onClick={() => { if (value) { onPick(value); setValue(''); } }}
-        disabled={!value}
-        className="primary"
-        style={{ padding:'10px 18px',opacity: value ? 1 : 0.4,cursor: value ? 'pointer' : 'not-allowed' }}
-      >
-        Add
-      </button>
+    <div style={{ paddingTop:12, borderTop:'1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.6,marginBottom:8 }}>
+        Add product from inventory
+      </div>
+      <div style={{ display:'flex', gap:8, width:'100%', boxSizing:'border-box' }}>
+        <select
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          style={{
+            flex:1, minWidth:0,
+            padding:'10px 12px',
+            background:'rgba(0,0,0,0.3)',
+            border:'1px solid rgba(255,255,255,0.1)',
+            color: value ? 'white' : 'rgba(255,255,255,0.4)',
+            borderRadius:8, outline:'none', fontSize:13,
+            appearance:'none', WebkitAppearance:'none',
+            backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.4)' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")`,
+            backgroundRepeat:'no-repeat', backgroundPosition:'right 12px center',
+            paddingRight:36,
+          }}
+        >
+          <option value="">Select a product…</option>
+          {options.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <button
+          onClick={() => { if (value) { onPick(value); setValue(''); } }}
+          disabled={!value}
+          className="primary"
+          style={{
+            flexShrink:0, width:72, padding:'10px 0',
+            opacity: value ? 1 : 0.4,
+            cursor: value ? 'pointer' : 'not-allowed',
+            fontWeight:700, fontSize:13,
+          }}
+        >
+          Add
+        </button>
+      </div>
     </div>
   );
 }
