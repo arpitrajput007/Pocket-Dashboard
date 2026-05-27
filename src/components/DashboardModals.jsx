@@ -26,17 +26,36 @@ function MetricCard({ label, value, color, glow, onClick, active, note, badge })
   );
 }
 
+// Flatten a per-platform-per-product breakdown into per-product totals.
+//   Nested shape: { meta: { "Title": 500 }, google: { "Title": 200 } } → { "Title": 700 }
+//   Legacy flat shape: { "Title": 500 } → { "Title": 500 } (passed through)
+// Exported so other views (PNL, all-time, etc.) can reuse it.
+function flattenAdProductBreakdown(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const values = Object.values(raw);
+  const isNested = values.length > 0 && values.every(v => v && typeof v === 'object' && !Array.isArray(v));
+  if (!isNested) {
+    // Legacy flat shape — already per-product.
+    const out = {};
+    Object.entries(raw).forEach(([k, v]) => { const n = Number(v); if (n > 0) out[k] = n; });
+    return out;
+  }
+  const out = {};
+  Object.values(raw).forEach(platformMap => {
+    Object.entries(platformMap || {}).forEach(([title, amount]) => {
+      const n = Number(amount) || 0;
+      if (n > 0) out[title] = (out[title] || 0) + n;
+    });
+  });
+  return out;
+}
+
 // ── ProductPNLModal ────────────────────────────────────────────────────────
 function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, adProductBreakdown, productPricing, onClose }) {
   const dayAd = adCosts[dateStr] || 0;
-  // Prefer DB-synced per-product breakdown; fall back to legacy localStorage for un-migrated dates.
-  let dayAdSplits = adProductBreakdown && typeof adProductBreakdown === 'object' ? adProductBreakdown : null;
-  if (!dayAdSplits || Object.keys(dayAdSplits).length === 0) {
-    try {
-      const legacy = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
-      dayAdSplits = legacy[dateStr] || {};
-    } catch { dayAdSplits = {}; }
-  }
+  // Sum across all platforms so the PNL row shows total ad spend per product
+  // regardless of which channel (Meta/Google/etc.) it came from.
+  const dayAdSplits = flattenAdProductBreakdown(adProductBreakdown);
 
   const productMap = {};
   dayOrders.forEach(o => {
@@ -151,60 +170,92 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, adProductBre
 }
 
 // ── AdSpendModal ───────────────────────────────────────────────────────────
-// Screenshot-OCR powered: drag/drop a Meta/Google/TikTok dashboard screenshot,
-// GPT-4o Vision extracts the platform + amount, owner reviews and saves.
-// Multiple platform screenshots can be added — totals auto-sum.
-const PLATFORM_LIST = [
-  { key: 'meta', label: 'Meta', color: '#1877f2' },
-  { key: 'google', label: 'Google', color: '#fbbc05' },
+// Two-level UX:
+//   List view — shows only the platforms the owner has enabled in Settings.
+//     Each row is clickable and drills into the per-product breakdown for THAT
+//     platform. Inline input is kept for owners who don't care about the split
+//     and just want to log a total.
+//   Drilldown view — per-product spend for one platform, with a dropdown to
+//     pick any product from inventory (even ones that didn't receive orders).
+//
+// Persisted shape (ad_costs.product_breakdown JSONB):
+//   { meta: { "Product A": 500, "Product B": 200 }, google: { "Product A": 100 } }
+//
+// Legacy flat shape { "Product A": 500 } is read transparently and migrated
+// into the owner's first enabled platform on the next save.
+const ALL_PLATFORMS = [
+  { key: 'meta',    label: 'Meta',    color: '#1877f2' },
+  { key: 'google',  label: 'Google',  color: '#fbbc05' },
   { key: 'youtube', label: 'YouTube', color: '#ff0000' },
-  { key: 'tiktok', label: 'TikTok', color: '#69c9d0' },
-  { key: 'other', label: 'Other', color: '#9ca3af' },
+  { key: 'tiktok',  label: 'TikTok',  color: '#69c9d0' },
+  { key: 'other',   label: 'Other',   color: '#9ca3af' },
 ];
 
-function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakdown, onSave, onClose }) {
-  const currentTotal = adCosts[dateStr] || 0;
-  const [breakdown, setBreakdown] = useState({ meta: 0, google: 0, youtube: 0, tiktok: 0, other: 0 });
-  const [breakdownLoaded, setBreakdownLoaded] = useState(false);
-  const [totalOverride, setTotalOverride] = useState(null); // null = derive from breakdown
+function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakdown, enabledPlatforms, allProducts = [], onSave, onClose }) {
+  const enabledKeys = (Array.isArray(enabledPlatforms) && enabledPlatforms.length > 0) ? enabledPlatforms : ['meta'];
+  const visiblePlatforms = ALL_PLATFORMS.filter(p => enabledKeys.includes(p.key));
+  const fallbackPlatform = enabledKeys[0];
+
+  // Platform-level totals: { meta: 1240, google: 500 } — used when the owner
+  // skips the breakdown and just logs a flat number per channel.
+  const [breakdown, setBreakdown] = useState({});
+  // Per-platform per-product splits: { meta: { "Title": 500 }, google: {...} }
+  const [productSplits, setProductSplits] = useState({});
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError] = useState(null);
   const [lastExtracted, setLastExtracted] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [drilldown, setDrilldown] = useState(null); // platform key when in sub-view
   const fileInputRef = useRef(null);
 
-  // Per-product splits: prefer DB value, fall back to legacy localStorage so owners
-  // who entered data before this migration don't see it disappear on first open.
-  const [splits, setSplits] = useState(() => {
-    if (initialProductBreakdown && Object.keys(initialProductBreakdown).length > 0) return initialProductBreakdown;
-    try {
-      const legacy = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
-      return legacy[dateStr] || {};
-    } catch { return {}; }
-  });
+  // Products that received orders today — surfaced first in the picker.
+  const dayProducts = [...new Set(dayOrders.flatMap(o => {
+    const items = typeof o.line_items === 'string' ? JSON.parse(o.line_items) : (o.line_items || []);
+    return items.map(li => li.title);
+  }).filter(Boolean))];
 
-  const products = [...new Set(dayOrders.flatMap(o => (o.line_items||[]).map(li => li.title)).filter(Boolean))];
   const prettyDate = parseDateStr(dateStr).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 
-  // Lazy-load existing breakdown for this date so reopening shows what was saved.
+  // Seed splits from the prop (handles both nested and legacy flat shapes).
+  useEffect(() => {
+    if (!initialProductBreakdown || typeof initialProductBreakdown !== 'object') return;
+    const values = Object.values(initialProductBreakdown);
+    const isNested = values.length > 0 && values.every(v => v && typeof v === 'object' && !Array.isArray(v));
+    if (isNested) {
+      setProductSplits(initialProductBreakdown);
+    } else {
+      // Legacy flat — migrate into the first enabled platform.
+      setProductSplits({ [fallbackPlatform]: { ...initialProductBreakdown } });
+    }
+  }, [initialProductBreakdown, fallbackPlatform]);
+
+  // Lazy-load the platform totals saved on this date.
   useEffect(() => {
     if (!store?.id || !dateStr) return;
     (async () => {
       const { data } = await supabase.from('ad_costs')
         .select('amount, breakdown')
         .eq('store_id', store.id).eq('date', dateStr).maybeSingle();
-      if (data?.breakdown && typeof data.breakdown === 'object' && Object.keys(data.breakdown).length > 0) {
-        setBreakdown({ meta: 0, google: 0, youtube: 0, tiktok: 0, other: 0, ...data.breakdown });
+      if (data?.breakdown && typeof data.breakdown === 'object') {
+        setBreakdown(data.breakdown);
       } else if (data?.amount > 0) {
-        // Legacy row with only a total — keep it as a manual override.
-        setTotalOverride(data.amount);
+        // Legacy row with only a total — stash under the fallback platform.
+        setBreakdown({ [fallbackPlatform]: data.amount });
       }
-      setBreakdownLoaded(true);
     })();
-  }, [store?.id, dateStr]);
+  }, [store?.id, dateStr, fallbackPlatform]);
 
-  const derivedTotal = Object.values(breakdown).reduce((s, v) => s + (Number(v) || 0), 0);
-  const total = totalOverride != null ? totalOverride : derivedTotal;
+  // Per-platform total: prefer the sum of product splits when the owner has
+  // started a breakdown for that platform, otherwise the flat platform total.
+  const platformTotal = (key) => {
+    const splits = productSplits[key];
+    if (splits && Object.keys(splits).length > 0) {
+      return Object.values(splits).reduce((s, v) => s + (Number(v) || 0), 0);
+    }
+    return Number(breakdown[key]) || 0;
+  };
+
+  const total = visiblePlatforms.reduce((sum, p) => sum + platformTotal(p.key), 0);
 
   const handleFile = async (file) => {
     if (!file) return;
@@ -227,29 +278,31 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
           dateStr,
           imageBase64: dataUrl,
           mimeType: file.type,
-          productTitles: products,
+          productTitles: dayProducts,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Extraction failed');
-      // Apply to the matching platform; if "other" comes back, route to 'other'.
-      const key = json.platform || 'other';
-      setBreakdown(b => ({ ...b, [key]: Number(json.amount) || 0 }));
-      setTotalOverride(null); // re-derive from breakdown
+      // Route the extracted platform — but only if it's enabled. If the owner
+      // hasn't toggled that channel on, fall back to their first enabled one.
+      let key = json.platform || 'other';
+      if (!enabledKeys.includes(key)) key = fallbackPlatform;
+      const amt = Number(json.amount) || 0;
+      setBreakdown(b => ({ ...b, [key]: amt }));
 
-      // Merge AI-matched product splits into the per-product splits map.
-      // Owner can still adjust them before saving.
       if (json.productSplits && typeof json.productSplits === 'object') {
-        setSplits(prev => {
-          const merged = { ...prev };
+        setProductSplits(prev => {
+          const next = { ...prev };
+          const platformSplit = { ...(next[key] || {}) };
           Object.entries(json.productSplits).forEach(([title, amount]) => {
             const n = Number(amount) || 0;
-            if (n > 0) merged[title] = n;
+            if (n > 0) platformSplit[title] = n;
           });
-          return merged;
+          next[key] = platformSplit;
+          return next;
         });
       }
-      setLastExtracted(json);
+      setLastExtracted({ ...json, platform: key });
     } catch (e) {
       setOcrError(e.message);
     } finally {
@@ -258,35 +311,140 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
   };
 
   const handleSave = async () => {
-    // Build the cleaned per-product splits (only positive values).
+    // Clean per-platform per-product splits — drop empties.
     const cleanSplits = {};
-    Object.entries(splits).forEach(([k, v]) => { if (v > 0) cleanSplits[k] = Number(v); });
+    Object.entries(productSplits).forEach(([platform, map]) => {
+      const inner = {};
+      Object.entries(map || {}).forEach(([title, amount]) => {
+        const n = Number(amount) || 0;
+        if (n > 0) inner[title] = n;
+      });
+      if (Object.keys(inner).length > 0) cleanSplits[platform] = inner;
+    });
 
-    // Build per-platform breakdown
+    // Clean platform totals — when a platform has a product breakdown, the
+    // total is recomputed from products so the row in `breakdown` reflects the
+    // actual spend (in case the owner increased product amounts past the
+    // original flat input).
     const cleanBreakdown = {};
-    Object.entries(breakdown).forEach(([k, v]) => { if (v > 0) cleanBreakdown[k] = Number(v); });
+    visiblePlatforms.forEach(p => {
+      const t = platformTotal(p.key);
+      if (t > 0) cleanBreakdown[p.key] = t;
+    });
 
     const source = lastExtracted ? 'screenshot_ocr' : 'manual';
     await onSave(dateStr, total, cleanBreakdown, source, cleanSplits);
-
-    // Clean up legacy localStorage entry for this date — data is now in DB.
-    try {
-      const legacy = JSON.parse(localStorage.getItem('dailyProductAdCosts') || '{}');
-      if (legacy[dateStr]) {
-        delete legacy[dateStr];
-        localStorage.setItem('dailyProductAdCosts', JSON.stringify(legacy));
-      }
-    } catch {}
-
     onClose();
   };
 
+  // ── Drilldown sub-view: per-product breakdown for one platform ────────────
+  if (drilldown) {
+    const platform = ALL_PLATFORMS.find(p => p.key === drilldown);
+    const platformSplits = productSplits[drilldown] || {};
+    const recordedTitles = Object.keys(platformSplits);
+
+    // Show: products from today's orders + any titles already recorded for
+    // this platform (covers products owner added previously, even if no orders today).
+    const visibleTitles = [...new Set([...dayProducts, ...recordedTitles])];
+
+    // Picker: any inventory product not already in this platform's split.
+    const pickerOptions = allProducts.filter(t => !visibleTitles.includes(t)).sort();
+
+    return (
+      <div className="modal-overlay active" onClick={e => e.target===e.currentTarget && onClose()}>
+        <div className="modal" style={{ maxWidth:520 }}>
+          <div style={{ display:'flex',alignItems:'center',gap:10,marginBottom:6 }}>
+            <button onClick={() => setDrilldown(null)} style={{ background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.7)',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:12 }}>← Back</button>
+            <div style={{ width:10,height:10,borderRadius:'50%',background:platform.color }}/>
+            <h2 style={{ margin:0,fontSize:18 }}>{platform.label} — {prettyDate}</h2>
+          </div>
+          <p style={{ color:'var(--text-muted)',fontSize:13,marginBottom:16 }}>
+            Split your {platform.label} spend across products. Pick from inventory to add products that didn't receive orders today.
+          </p>
+
+          {/* Total for this platform */}
+          <div style={{ background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:10,padding:14,marginBottom:18 }}>
+            <div style={{ fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.6,marginBottom:6 }}>
+              Total {platform.label} Spend for the Day
+            </div>
+            <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+              <span style={{ color:'rgba(255,255,255,0.4)',fontSize:18,fontWeight:700 }}>₹</span>
+              <input type="number" value={platformTotal(drilldown) === 0 ? '' : platformTotal(drilldown)} placeholder="0"
+                onChange={e => {
+                  const v = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  // Setting the platform total clears the product split — owner
+                  // explicitly chose to log a flat number for this channel.
+                  setBreakdown(b => ({ ...b, [drilldown]: v }));
+                  setProductSplits(s => { const next = { ...s }; delete next[drilldown]; return next; });
+                }}
+                onFocus={e => e.target.select()}
+                style={{ flex:1,padding:'10px 12px',background:'rgba(0,0,0,0.35)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,outline:'none',fontSize:20,fontWeight:700 }} />
+            </div>
+          </div>
+
+          {/* Per-product list */}
+          <div style={{ fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:0.6,marginBottom:8 }}>
+            Per-Product Breakdown
+          </div>
+          <div style={{ display:'flex',flexDirection:'column',gap:6,marginBottom:14,maxHeight:280,overflowY:'auto' }}>
+            {visibleTitles.length === 0 ? (
+              <div style={{ padding:'14px',background:'rgba(0,0,0,0.2)',borderRadius:8,fontSize:12,color:'var(--text-muted)',textAlign:'center' }}>
+                No orders today — pick a product below to log spend.
+              </div>
+            ) : visibleTitles.map(title => (
+              <div key={title} style={{ display:'flex',alignItems:'center',gap:10,background:'rgba(0,0,0,0.2)',padding:'10px 12px',borderRadius:8,border:'1px solid rgba(255,255,255,0.06)' }}>
+                <span style={{ flex:1,fontSize:13,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{title}</span>
+                <span style={{ color:'rgba(255,255,255,0.3)',fontSize:12 }}>₹</span>
+                <input type="number" value={platformSplits[title] || ''} placeholder="0"
+                  onChange={e => {
+                    const v = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                    setProductSplits(s => {
+                      const next = { ...s };
+                      const inner = { ...(next[drilldown] || {}) };
+                      if (v > 0) inner[title] = v; else delete inner[title];
+                      next[drilldown] = inner;
+                      return next;
+                    });
+                  }}
+                  onFocus={e => e.target.select()}
+                  style={{ width:100,padding:'6px 8px',background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.08)',color:'white',borderRadius:6,outline:'none',fontSize:13,textAlign:'right' }} />
+              </div>
+            ))}
+          </div>
+
+          {/* Inventory picker */}
+          {pickerOptions.length > 0 && (
+            <InventoryPicker
+              options={pickerOptions}
+              onPick={(title) => {
+                setProductSplits(s => {
+                  const next = { ...s };
+                  const inner = { ...(next[drilldown] || {}) };
+                  if (!(title in inner)) inner[title] = 0;
+                  next[drilldown] = inner;
+                  return next;
+                });
+              }}
+            />
+          )}
+
+          <div style={{ display:'flex',gap:12,marginTop:14 }}>
+            <button onClick={() => setDrilldown(null)} className="primary" style={{ flex:1 }}>Done</button>
+            <button onClick={() => setDrilldown(null)} style={{ flex:1 }}>Cancel</button>
+          </div>
+        </div>
+        <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
+  // ── List view: enabled platforms + total ─────────────────────────────────
   return (
     <div className="modal-overlay active" onClick={e => e.target===e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth:520 }}>
         <h2 style={{ margin:'0 0 4px' }}>Ad Spend — {prettyDate}</h2>
         <p style={{ color:'var(--text-muted)',fontSize:14,marginBottom:18 }}>
-          Drop a screenshot of your ad dashboard — AI auto-fills the platform &amp; amount. Or enter manually.
+          Drop a screenshot of your ad dashboard — AI auto-fills the platform &amp; amount. Or click a platform to add a per-product breakdown.
         </p>
 
         {/* OCR drop zone */}
@@ -317,13 +475,12 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
                 📷 Drop screenshot here · click to browse · paste (⌘V)
               </div>
               <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11 }}>
-                Meta Ads Manager, Google Ads, TikTok — AI auto-detects the platform
+                AI auto-detects the platform &amp; matches campaign names to your products
               </div>
             </>
           )}
         </div>
 
-        {/* Extraction result banner */}
         {lastExtracted && !ocrLoading && (() => {
           const matchCount = lastExtracted.productSplits ? Object.keys(lastExtracted.productSplits).length : 0;
           return (
@@ -336,11 +493,8 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
               <span style={{ opacity: 0.6, marginLeft: 6 }}>({Math.round(lastExtracted.confidence * 100)}% confidence)</span>
               {matchCount > 0 && (
                 <div style={{ fontSize: 11, opacity: 0.9, marginTop: 3 }}>
-                  Auto-matched {matchCount} product{matchCount > 1 ? 's' : ''} from campaign names — review below.
+                  Auto-matched {matchCount} product{matchCount > 1 ? 's' : ''} — open the platform to review.
                 </div>
-              )}
-              {lastExtracted.notes && (
-                <div style={{ fontSize: 11, opacity: 0.7, marginTop: 3 }}>{lastExtracted.notes}</div>
               )}
             </div>
           );
@@ -353,57 +507,56 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
           }}>⚠ {ocrError}</div>
         )}
 
-        {/* Per-platform breakdown */}
-        <div style={{ fontSize:12,color:'var(--text-muted)',marginBottom:8,fontWeight:700,textTransform:'uppercase',letterSpacing:0.5 }}>By Platform</div>
-        <div style={{ display:'flex',flexDirection:'column',gap:6,marginBottom:16 }}>
-          {PLATFORM_LIST.map(p => (
-            <div key={p.key} style={{ display:'flex',alignItems:'center',gap:10,background:'rgba(0,0,0,0.2)',padding:'8px 12px',borderRadius:8,border:'1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ width:8,height:8,borderRadius:'50%',background:p.color,flexShrink:0 }}/>
-              <span style={{ flex:1,fontSize:13,fontWeight:600 }}>{p.label}</span>
-              <span style={{ color:'rgba(255,255,255,0.3)',fontSize:12 }}>₹</span>
-              <input type="number" value={breakdown[p.key] === 0 ? '' : breakdown[p.key]} placeholder="0"
-                onChange={e => {
-                  const v = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
-                  setBreakdown(b => ({ ...b, [p.key]: v }));
-                  setTotalOverride(null);
+        {/* Enabled platforms list — each row is clickable + inline editable */}
+        <div style={{ fontSize:12,color:'var(--text-muted)',marginBottom:8,fontWeight:700,textTransform:'uppercase',letterSpacing:0.5 }}>
+          By Platform <span style={{ opacity:0.5,fontWeight:600,textTransform:'none',letterSpacing:0 }}>· click a row for per-product breakdown</span>
+        </div>
+        <div style={{ display:'flex',flexDirection:'column',gap:8,marginBottom:16 }}>
+          {visiblePlatforms.map(p => {
+            const t = platformTotal(p.key);
+            const splitCount = Object.keys(productSplits[p.key] || {}).filter(k => productSplits[p.key][k] > 0).length;
+            return (
+              <div
+                key={p.key}
+                onClick={() => setDrilldown(p.key)}
+                style={{
+                  display:'flex',alignItems:'center',gap:10,
+                  background:'rgba(0,0,0,0.2)',padding:'12px 14px',borderRadius:10,
+                  border:'1px solid rgba(255,255,255,0.06)',cursor:'pointer',
+                  transition:'all 0.15s',
                 }}
-                onFocus={e => e.target.select()}
-                style={{ width:100,padding:'6px 8px',background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.08)',color:'white',borderRadius:6,outline:'none',fontSize:13,textAlign:'right' }} />
-            </div>
-          ))}
-        </div>
-
-        {/* Total — derived but overridable */}
-        <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(167,139,250,0.08)',border:'1px solid rgba(167,139,250,0.2)',padding:'10px 14px',borderRadius:10,marginBottom:16 }}>
-          <span style={{ fontSize:13,fontWeight:700,color:'rgba(167,139,250,0.95)' }}>Total Ad Spend</span>
-          <div style={{ display:'flex',alignItems:'center',gap:8 }}>
-            <span style={{ color:'rgba(255,255,255,0.4)',fontSize:13 }}>₹</span>
-            <input type="number" value={total === 0 ? '' : total} placeholder="0"
-              onChange={e => setTotalOverride(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
-              onFocus={e => e.target.select()}
-              style={{ width:120,padding:'6px 8px',background:'rgba(0,0,0,0.35)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:6,outline:'none',fontSize:14,fontWeight:700,textAlign:'right' }} />
-          </div>
-        </div>
-
-        {/* Existing per-product splits (optional). Opens automatically when AI auto-filled it. */}
-        {products.length > 0 && (
-          <details style={{ marginBottom: 16 }} open={Object.keys(splits).length > 0}>
-            <summary style={{ fontSize:12,color:'var(--text-muted)',cursor:'pointer',fontWeight:600,padding:'4px 0' }}>
-              Per-Product Breakdown {Object.keys(splits).length > 0 ? `(${Object.keys(splits).length} filled)` : '(optional)'}
-            </summary>
-            <div style={{ display:'flex',flexDirection:'column',gap:6,marginTop:10,maxHeight:200,overflowY:'auto' }}>
-              {products.map(p => (
-                <div key={p} style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:'rgba(0,0,0,0.2)',padding:'6px 10px',borderRadius:6,border:'1px solid var(--border)' }}>
-                  <span style={{ fontWeight:500,fontSize:12,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginRight:10 }}>{p}</span>
-                  <input type="number" value={splits[p]||''} placeholder="0"
-                    onChange={e => setSplits(s => ({ ...s, [p]: parseFloat(e.target.value)||0 }))}
-                    onFocus={e => e.target.select()}
-                    style={{ width:80,padding:5,background:'rgba(0,0,0,0.3)',border:'1px solid var(--border)',color:'white',borderRadius:4,outline:'none',fontSize:12 }} />
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,0,0,0.2)'}
+              >
+                <div style={{ width:10,height:10,borderRadius:'50%',background:p.color,flexShrink:0 }}/>
+                <div style={{ flex:1,minWidth:0 }}>
+                  <div style={{ fontSize:14,fontWeight:700 }}>{p.label}</div>
+                  {splitCount > 0 ? (
+                    <div style={{ fontSize:11,color:'rgba(52,211,153,0.85)',marginTop:2 }}>
+                      ✓ {splitCount} product{splitCount > 1 ? 's' : ''} broken down
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:2 }}>
+                      Tap to add per-product spend
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
-          </details>
-        )}
+                <div style={{ textAlign:'right' }}>
+                  <div style={{ fontSize:15,fontWeight:700,color:t > 0 ? '#fff' : 'rgba(255,255,255,0.3)' }}>
+                    ₹{t.toLocaleString('en-IN')}
+                  </div>
+                </div>
+                <span style={{ color:'rgba(255,255,255,0.3)',fontSize:18,marginLeft:4 }}>›</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Total */}
+        <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(167,139,250,0.08)',border:'1px solid rgba(167,139,250,0.2)',padding:'12px 16px',borderRadius:10,marginBottom:16 }}>
+          <span style={{ fontSize:13,fontWeight:700,color:'rgba(167,139,250,0.95)' }}>Total Ad Spend</span>
+          <span style={{ fontSize:18,fontWeight:800,color:'#fff' }}>₹{total.toLocaleString('en-IN')}</span>
+        </div>
 
         <div style={{ display:'flex',gap:12 }}>
           <button onClick={handleSave} className="primary" style={{ flex:1 }}>Save</button>
@@ -411,6 +564,31 @@ function AdSpendModal({ store, dateStr, dayOrders, adCosts, initialProductBreakd
         </div>
       </div>
       <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+// Small picker used inside the AdSpendModal drilldown view.
+function InventoryPicker({ options, onPick }) {
+  const [value, setValue] = useState('');
+  return (
+    <div style={{ display:'flex',gap:8,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)' }}>
+      <select
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        style={{ flex:1,padding:'10px 12px',background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',color:'white',borderRadius:8,outline:'none',fontSize:13 }}
+      >
+        <option value="">+ Pick product from inventory</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+      <button
+        onClick={() => { if (value) { onPick(value); setValue(''); } }}
+        disabled={!value}
+        className="primary"
+        style={{ padding:'10px 18px',opacity: value ? 1 : 0.4,cursor: value ? 'pointer' : 'not-allowed' }}
+      >
+        Add
+      </button>
     </div>
   );
 }

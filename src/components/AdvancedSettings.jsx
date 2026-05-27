@@ -64,6 +64,19 @@ const FEATURES = [
 const DEFAULT_FEATURES = FEATURES.reduce((acc, f) => ({ ...acc, [f.key]: true }), {});
 
 /* ─────────────────────────────────────────────
+   AD PLATFORMS — owner-toggled whitelist for the
+   Ad Spend modal. Stored on stores.enabled_ad_platforms.
+───────────────────────────────────────────── */
+const AD_PLATFORMS = [
+  { key: 'meta',    label: 'Meta',    description: 'Facebook & Instagram Ads via Meta Ads Manager.',          color: 'rgba(24,119,242,1)',  glow: 'rgba(24,119,242,0.3)'  },
+  { key: 'google',  label: 'Google',  description: 'Google Search, Display & Shopping Ads.',                  color: 'rgba(251,188,5,1)',   glow: 'rgba(251,188,5,0.3)'   },
+  { key: 'youtube', label: 'YouTube', description: 'YouTube video & in-stream ads (managed via Google Ads).', color: 'rgba(255,0,0,1)',     glow: 'rgba(255,0,0,0.3)'     },
+  { key: 'tiktok',  label: 'TikTok',  description: 'TikTok Ads Manager spend.',                               color: 'rgba(105,201,208,1)', glow: 'rgba(105,201,208,0.3)' },
+  { key: 'other',   label: 'Other',   description: 'Catch-all for influencer payouts, affiliate spends, etc.', color: 'rgba(156,163,175,1)', glow: 'rgba(156,163,175,0.3)' },
+];
+const DEFAULT_AD_PLATFORMS = ['meta'];
+
+/* ─────────────────────────────────────────────
    TOGGLE SWITCH
 ───────────────────────────────────────────── */
 function Toggle({ enabled, onChange, color }) {
@@ -168,6 +181,7 @@ function FeatureCard({ feature, enabled, onToggle }) {
 ───────────────────────────────────────────── */
 export default function AdvancedSettings({ store }) {
   const [features, setFeatures] = useState(DEFAULT_FEATURES);
+  const [adPlatforms, setAdPlatforms] = useState(DEFAULT_AD_PLATFORMS);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
@@ -180,11 +194,25 @@ export default function AdvancedSettings({ store }) {
     if (saved && typeof saved === 'object') {
       setFeatures({ ...DEFAULT_FEATURES, ...saved });
     }
+    const platforms = store?.enabled_ad_platforms;
+    if (Array.isArray(platforms) && platforms.length > 0) {
+      setAdPlatforms(platforms);
+    }
     setLoading(false);
   }, [store]);
 
   const toggleFeature = (key) => {
     setFeatures(prev => ({ ...prev, [key]: !prev[key] }));
+    setSaved(false);
+  };
+
+  const toggleAdPlatform = (key) => {
+    setAdPlatforms(prev => {
+      const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      // Force at least one platform on — owners shouldn't be able to disable every channel
+      // and then wonder why Ad Spend modal looks empty.
+      return next.length === 0 ? [key] : next;
+    });
     setSaved(false);
   };
 
@@ -197,7 +225,7 @@ export default function AdvancedSettings({ store }) {
 
     const { error: err } = await supabase
       .from('stores')
-      .update({ dashboard_features: features })
+      .update({ dashboard_features: features, enabled_ad_platforms: adPlatforms })
       .eq('id', store.id);
 
     setSaving(false);
@@ -353,6 +381,75 @@ export default function AdvancedSettings({ store }) {
             onToggle={() => toggleFeature(feature.key)}
           />
         ))}
+      </div>
+
+      {/* Ad Platforms section */}
+      <div style={{ marginTop: '36px', marginBottom: '14px' }}>
+        <h3 style={{
+          fontFamily: 'Outfit, sans-serif', fontSize: '18px', fontWeight: 800,
+          color: '#fff', margin: '0 0 6px 0', letterSpacing: '-0.2px',
+        }}>
+          Ad Platforms
+        </h3>
+        <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+          Choose which ad channels appear in the daily Ad Spend modal.{' '}
+          <span style={{ color: 'rgba(167,139,250,0.8)' }}>
+            {adPlatforms.length} of {AD_PLATFORMS.length} enabled.
+          </span>
+          {' '}Each enabled platform is clickable — drill in to record per-product spend.
+        </p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {AD_PLATFORMS.map((p) => {
+          const enabled = adPlatforms.includes(p.key);
+          return (
+            <div
+              key={p.key}
+              onClick={() => toggleAdPlatform(p.key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '16px', cursor: 'pointer',
+                padding: '16px 18px', borderRadius: '14px',
+                background: enabled
+                  ? `linear-gradient(135deg, ${p.glow.replace('0.3', '0.08')}, transparent)`
+                  : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${enabled ? p.glow : 'rgba(255,255,255,0.06)'}`,
+                transition: 'all 0.25s ease',
+              }}
+            >
+              <div style={{
+                width: '10px', height: '10px', borderRadius: '50%',
+                background: enabled ? p.color : 'rgba(255,255,255,0.15)',
+                boxShadow: enabled ? `0 0 12px ${p.glow}` : 'none',
+                transition: 'all 0.2s', flexShrink: 0,
+              }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: '14px', fontWeight: 700,
+                  color: enabled ? '#fff' : 'rgba(255,255,255,0.5)',
+                  marginBottom: '3px', fontFamily: 'Outfit, sans-serif',
+                }}>
+                  {p.label}
+                </div>
+                <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', lineHeight: 1.5 }}>
+                  {p.description}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                <div style={{
+                  fontSize: '11px', fontWeight: 700, letterSpacing: '0.5px',
+                  color: enabled ? p.color : 'rgba(255,255,255,0.25)',
+                }}>
+                  {enabled ? 'ON' : 'OFF'}
+                </div>
+                <Toggle
+                  enabled={enabled}
+                  onChange={(e) => { e.stopPropagation(); toggleAdPlatform(p.key); }}
+                  color={p.color}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Shopify Sync Status Card */}

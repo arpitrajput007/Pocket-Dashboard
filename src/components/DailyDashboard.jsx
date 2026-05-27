@@ -16,8 +16,17 @@ export default function DailyDashboard({ store, refreshTrigger }) {
   const [orders, setOrders] = useState([]);
   const [adCosts, setAdCosts] = useState({});
   // Per-product ad-spend splits keyed by date. Synced via ad_costs.product_breakdown.
+  // Shape: { [date]: { meta: { "Title": amount }, google: {...} } }
+  // Legacy flat shape { "Title": amount } is still accepted and shown under the
+  // owner's first enabled platform on the next save (handled in AdSpendModal).
   const [adProductBreakdowns, setAdProductBreakdowns] = useState({});
   const [productPricing, setProductPricing] = useState({});
+  // Full inventory list for the "+ Pick product from inventory" picker in AdSpendModal.
+  const [allProducts, setAllProducts] = useState([]);
+  // Owner-toggled ad platforms from settings. Falls back to ['meta'] if not set.
+  const enabledAdPlatforms = Array.isArray(store?.enabled_ad_platforms) && store.enabled_ad_platforms.length > 0
+    ? store.enabled_ad_platforms
+    : ['meta'];
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -62,6 +71,12 @@ export default function DailyDashboard({ store, refreshTrigger }) {
 
       const baseById = new Map();
       (data || []).forEach(p => { if (!p.parent_product_id) baseById.set(p.id, p); });
+
+      // Distinct base-product titles for the AdSpendModal product picker.
+      const titles = [...new Set((data || [])
+        .filter(p => !p.parent_product_id && p.title)
+        .map(p => p.title))].sort((a, b) => a.localeCompare(b));
+      setAllProducts(titles);
 
       const pricing = {};
       (data || []).forEach(p => {
@@ -427,7 +442,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       </div>
 
       {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} adProductBreakdown={adProductBreakdowns[modalState.date]} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
-      {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} initialProductBreakdown={adProductBreakdowns[modalState.date]} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} initialProductBreakdown={adProductBreakdowns[modalState.date]} enabledPlatforms={enabledAdPlatforms} allProducts={allProducts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} onClose={() => setModalState({ type: null })} />}
     </div>
