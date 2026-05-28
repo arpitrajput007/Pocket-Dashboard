@@ -46,25 +46,35 @@ export function isOrderDelivered(o) {
   const syntheticSS = rawTags.find(t => t.startsWith('__ss:'));
   const shipmentStatus = syntheticSS ? syntheticSS.replace('__ss:', '') : '';
 
-  // isRTO: any tag that includes 'rto' (but not rto_prediction) OR 'undelivered' — but not already delivered
-  const isRTO = rawTags.some(t =>
+  // 1. Courier API explicitly confirmed delivery via __ss: tag → highest priority, always delivered
+  if (shipmentStatus === 'delivered') return true;
+
+  // 2. Check for a plain "Delivered" tag (set by courier webhook, Shopify Flow, or manually)
+  const hasDeliveredTag = rawTags.some(t =>
+    !t.startsWith('__ss:') &&
+    t.includes('delivered') &&
+    !t.includes('undelivered') &&
+    !t.includes('failed')
+  );
+  if (!hasDeliveredTag) return false;
+
+  // 3. Has Delivered tag — only override it when the courier's __ss: status explicitly signals RTO/failure.
+  //    Plain "rto"-containing tags are NOT enough to cancel an explicit Delivered tag
+  //    (avoids mis-exclusion when orders have stale manual tags like "rto-pending" alongside "Delivered").
+  const courierRTO = syntheticSS && (
+    shipmentStatus.includes('rto') ||
+    shipmentStatus === 'returned' ||
+    shipmentStatus === 'failure' ||
+    shipmentStatus === 'undelivered'
+  );
+
+  // 4. When there is NO synthetic __ss: tag at all, plain RTO tags are still respected
+  const plainRTO = !syntheticSS && rawTags.some(t =>
     !t.startsWith('__ss:') &&
     ((t.includes('rto') && !t.includes('rto_prediction')) || t.includes('undelivered'))
   );
 
-  // ssDelivered: synthetic tag OR any plain tag that includes 'delivered'
-  // Using .includes() instead of === to handle shipping partners like:
-  // Shiprocket: 'Delivered', Delhivery: 'Delivered', Ecom: 'DELIVERED', etc.
-  const ssDelivered =
-    shipmentStatus === 'delivered' ||
-    rawTags.some(t =>
-      !t.startsWith('__ss:') &&
-      t.includes('delivered') &&
-      !t.includes('undelivered') &&
-      !t.includes('failed')
-    );
-
-  return !isRTO && ssDelivered;
+  return !courierRTO && !plainRTO;
 }
 
 export function isOrderPrepaidRevenue(o) {

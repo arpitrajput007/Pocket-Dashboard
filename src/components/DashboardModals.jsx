@@ -770,7 +770,14 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
 }
 
 // ── ItemsModal ──────────────────────────────────────────────────────────────
-function ItemsModal({ prettyDate, allItems, onClose }) {
+// mode: 'ordered' (all items) | 'delivered' (delivered items only)
+function ItemsModal({ prettyDate, allItems, mode = 'ordered', onClose }) {
+  const label    = mode === 'delivered' ? 'Items Delivered' : 'Items Ordered';
+  const icon     = mode === 'delivered' ? '✅' : '📦';
+  const accent   = mode === 'delivered' ? '#34d399' : '#a78bfa';
+  const accentBg = mode === 'delivered' ? 'rgba(52,211,153,0.1)' : 'rgba(167,139,250,0.1)';
+  const accentBd = mode === 'delivered' ? 'rgba(52,211,153,0.25)' : 'rgba(167,139,250,0.25)';
+
   // Group by title + variant so "Pack of 2" and "Pack of 3" appear as separate rows
   const productMap = {};
   allItems.forEach(li => {
@@ -793,7 +800,7 @@ function ItemsModal({ prettyDate, allItems, onClose }) {
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>📦 Items Ordered</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>{icon} {label}</div>
             <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#fff' }}>{prettyDate}</h2>
           </div>
           <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
@@ -801,7 +808,7 @@ function ItemsModal({ prettyDate, allItems, onClose }) {
 
         {/* Summary pill */}
         <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-          <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.25)', fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>
+          <div style={{ padding: '6px 14px', borderRadius: 8, background: accentBg, border: `1px solid ${accentBd}`, fontSize: 13, fontWeight: 600, color: accent }}>
             {totalUnits} total units
           </div>
           <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)', fontSize: 13, fontWeight: 600, color: '#38bdf8' }}>
@@ -812,7 +819,7 @@ function ItemsModal({ prettyDate, allItems, onClose }) {
         {/* Product list */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
           {products.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>No items for this day</div>
+            <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>No {mode === 'delivered' ? 'delivered ' : ''}items for this day</div>
           ) : products.map((p, i) => {
             const pct = totalUnits > 0 ? (p.qty / totalUnits) * 100 : 0;
             return (
