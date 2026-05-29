@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient';
 import {
   Search, Save, RefreshCw, Plus, Eye, EyeOff,
   Tag, AlertTriangle, CheckCircle2, Package, DollarSign,
-  Layers, Trash2, X
+  Layers, Trash2, X, History
 } from 'lucide-react';
 
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN');
@@ -128,6 +128,9 @@ export default function PricingView({ store }) {
   const [newProduct, setNewProduct] = useState({ title: '', sku: '', cost_price: 0, selling_price: 0, shipping_cost: 135 });
   const [packModal, setPackModal] = useState(null); // { parent, pack_size, cost_price, selling_price }
   const [costDateModal, setCostDateModal] = useState(null); // { mode:'single'|'all', items:[...], date:'YYYY-MM-DD' }
+  const [historyOpen, setHistoryOpen] = useState({});   // { [productId]: true }
+  const [historyRows, setHistoryRows] = useState({});   // { [productId]: [{id, effective_from, cost_price, shipping_cost}] }
+  const [historyBusy, setHistoryBusy] = useState({});   // { [productId]: true }
   const [localHidden, setLocalHidden] = useState({});
 
   function showToast(msg, type = 'success') {
@@ -276,8 +279,66 @@ export default function PricingView({ store }) {
     if (errors.length) showToast(`${errors.length} save(s) failed`, 'error');
     else {
       markSaved(items.map(p => p.id));
+      // Refresh any open history panels for the saved products.
+      items.forEach(p => { if (historyOpen[p.id]) loadHistory(p.id); });
       showToast(`Saved ${items.length} product(s) — cost effective ${date} ✓`);
     }
+  }
+
+  // ── Cost-change history (per product) ──────────────────────────────────────
+  async function loadHistory(productId) {
+    setHistoryBusy(b => ({ ...b, [productId]: true }));
+    const { data, error } = await supabase
+      .from('product_cost_history')
+      .select('id, effective_from, cost_price, shipping_cost')
+      .eq('product_id', productId)
+      .order('effective_from', { ascending: false });
+    setHistoryBusy(b => ({ ...b, [productId]: false }));
+    if (error) { showToast('Could not load history: ' + error.message, 'error'); return; }
+    setHistoryRows(r => ({ ...r, [productId]: data || [] }));
+  }
+
+  function toggleHistory(productId) {
+    setHistoryOpen(o => {
+      const next = { ...o, [productId]: !o[productId] };
+      if (next[productId] && !historyRows[productId]) loadHistory(productId);
+      return next;
+    });
+  }
+
+  function updateHistoryField(productId, idx, field, value) {
+    setHistoryRows(r => {
+      const list = [...(r[productId] || [])];
+      list[idx] = { ...list[idx], [field]: value, _dirty: true };
+      return { ...r, [productId]: list };
+    });
+  }
+
+  async function saveHistoryEntry(productId, entry) {
+    if (!entry.effective_from) { showToast('Pick a date for this entry', 'error'); return; }
+    setHistoryBusy(b => ({ ...b, [productId]: true }));
+    const { error } = await supabase.from('product_cost_history').upsert({
+      id: entry.id,
+      product_id: productId,
+      store_id: store.id,
+      cost_price: Number(entry.cost_price) || 0,
+      shipping_cost: Number(entry.shipping_cost) || 0,
+      effective_from: entry.effective_from,
+    }, { onConflict: 'product_id,effective_from' });
+    setHistoryBusy(b => ({ ...b, [productId]: false }));
+    if (error) { showToast('Save failed: ' + error.message, 'error'); return; }
+    showToast('Cost entry updated ✓');
+    loadHistory(productId);
+  }
+
+  async function deleteHistoryEntry(productId, id) {
+    if (!confirm('Delete this cost entry? Orders in its window will revert to the previous cost.')) return;
+    setHistoryBusy(b => ({ ...b, [productId]: true }));
+    const { error } = await supabase.from('product_cost_history').delete().eq('id', id);
+    setHistoryBusy(b => ({ ...b, [productId]: false }));
+    if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
+    showToast('Cost entry deleted');
+    loadHistory(productId);
   }
 
   function toggleLocalHide(productId) {
@@ -412,9 +473,11 @@ export default function PricingView({ store }) {
   function renderRow(p, opts = {}) {
     const { isPack = false, parent = null, isLast = false } = opts;
     const hiddenFlag = !isPack && isProductHidden(p);
+    const histExpanded = !!historyOpen[p.id];
     return (
-      <tr key={p.id} style={{
-        borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.04)',
+      <React.Fragment key={p.id}>
+      <tr style={{
+        borderBottom: histExpanded ? 'none' : (isLast ? 'none' : '1px solid rgba(255,255,255,0.04)'),
         background: p._dirty ? 'rgba(167,139,250,0.04)' : isPack ? 'rgba(56,189,248,0.025)' : 'transparent',
         opacity: hiddenFlag ? 0.45 : 1,
         transition: 'background 0.15s, opacity 0.2s',
@@ -489,6 +552,14 @@ export default function PricingView({ store }) {
             }}>
               {savingId===p.id ? '...' : 'Save'}
             </button>
+            <button onClick={()=>toggleHistory(p.id)} title="Cost history" style={{
+              padding:'5px 8px', borderRadius:'7px', fontSize:'11px', fontWeight:600,
+              background: histExpanded ? 'rgba(251,191,36,0.14)' : 'rgba(255,255,255,0.05)',
+              border: histExpanded ? '1px solid rgba(251,191,36,0.3)' : '1px solid rgba(255,255,255,0.08)',
+              color: histExpanded ? 'rgba(251,191,36,0.95)' : 'rgba(255,255,255,0.45)', cursor:'pointer',
+            }}>
+              <History size={11}/>
+            </button>
             {isPack ? (
               <button onClick={()=>deletePack(p)} title="Delete pack" style={{
                 padding:'5px 8px', borderRadius:'7px', fontSize:'11px', fontWeight:600,
@@ -522,6 +593,53 @@ export default function PricingView({ store }) {
           </div>
         </td>
       </tr>
+      {histExpanded && (
+        <tr style={{ background:'rgba(0,0,0,0.22)', borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.04)' }}>
+          <td colSpan={6} style={{ padding:'4px 14px 14px' }}>
+            {historyBusy[p.id] && !historyRows[p.id] ? (
+              <div style={{ fontSize:12, color:'rgba(255,255,255,0.4)', padding:'10px 4px' }}>Loading cost history…</div>
+            ) : (historyRows[p.id] && historyRows[p.id].length) ? (
+              <div style={{ paddingLeft: isPack ? 32 : 0 }}>
+                <div style={{ fontSize:10, fontWeight:700, color:'rgba(255,255,255,0.35)', textTransform:'uppercase', letterSpacing:'0.5px', margin:'6px 0 8px' }}>
+                  Cost history — orders use the cost effective on their order date
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                  {historyRows[p.id].map((h, idx) => (
+                    <div key={h.id} style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)', borderRadius:9, padding:'8px 10px' }}>
+                      <label style={{ fontSize:10, color:'rgba(255,255,255,0.4)' }}>From
+                        <input type="date" value={h.effective_from} max={today()} onChange={e=>updateHistoryField(p.id, idx, 'effective_from', e.target.value)}
+                          style={{ marginLeft:6, padding:'5px 8px', borderRadius:7, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'#fff', fontSize:12, outline:'none', colorScheme:'dark' }}/>
+                      </label>
+                      <label style={{ fontSize:10, color:'rgba(255,255,255,0.4)' }}>Cost ₹
+                        <input type="number" value={h.cost_price} onChange={e=>updateHistoryField(p.id, idx, 'cost_price', e.target.value)} onFocus={e=>e.target.select()}
+                          style={{ marginLeft:6, width:74, padding:'5px 8px', borderRadius:7, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'#fff', fontSize:12, outline:'none' }}/>
+                      </label>
+                      <label style={{ fontSize:10, color:'rgba(255,255,255,0.4)' }}>Ship ₹
+                        <input type="number" value={h.shipping_cost ?? ''} onChange={e=>updateHistoryField(p.id, idx, 'shipping_cost', e.target.value)} onFocus={e=>e.target.select()}
+                          style={{ marginLeft:6, width:64, padding:'5px 8px', borderRadius:7, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(0,0,0,0.35)', color:'#fff', fontSize:12, outline:'none' }}/>
+                      </label>
+                      <div style={{ display:'flex', gap:6, marginLeft:'auto' }}>
+                        <button onClick={()=>saveHistoryEntry(p.id, h)} disabled={!h._dirty || historyBusy[p.id]} style={{
+                          padding:'5px 10px', borderRadius:7, fontSize:11, fontWeight:700, border:'none',
+                          background: h._dirty ? 'linear-gradient(135deg,rgba(167,139,250,1),rgba(56,189,248,1))' : 'rgba(255,255,255,0.06)',
+                          color: h._dirty ? '#000' : 'rgba(255,255,255,0.25)', cursor: h._dirty ? 'pointer' : 'not-allowed' }}>Save</button>
+                        <button onClick={()=>deleteHistoryEntry(p.id, h.id)} title="Delete entry" style={{
+                          padding:'5px 8px', borderRadius:7, fontSize:11, border:'1px solid rgba(251,113,133,0.2)',
+                          background:'rgba(251,113,133,0.08)', color:'rgba(251,113,133,0.85)', cursor:'pointer' }}><Trash2 size={11}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize:12, color:'rgba(255,255,255,0.4)', padding:'10px 4px', paddingLeft: isPack ? 32 : 0 }}>
+                No cost history yet. Change the cost above and Save to add a dated entry.
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+      </React.Fragment>
     );
   }
 
