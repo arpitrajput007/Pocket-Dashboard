@@ -41,6 +41,61 @@ export function parseDateStr(s) {
   return new Date(y, mo - 1, d, 12, 0, 0);
 }
 
+// ── Time-effective cost prices ──────────────────────────────────────────────
+// A product's cost changes over time. `history` is a list of dated cost entries
+// (newest first). For a given order date we use the most recent entry whose
+// effective_from is on/before that date. Orders that predate every entry fall
+// back to the oldest entry; with no history we use the product's base cost.
+//
+// history entry shape: { effective_from: 'YYYY-MM-DD', cost_price, shipping_cost }
+
+// Loads the cost-history rows for a store and returns them grouped by product_id,
+// each group sorted newest-first. Fails soft to {} so the dashboard still works
+// before the migration is run.
+export async function loadCostHistory(supabase, storeId) {
+  if (!supabase || !storeId) return {};
+  try {
+    const { data, error } = await supabase
+      .from('product_cost_history')
+      .select('product_id, cost_price, shipping_cost, effective_from')
+      .eq('store_id', storeId)
+      .order('effective_from', { ascending: false });
+    if (error) return {};
+    const byProduct = {};
+    (data || []).forEach(h => { (byProduct[h.product_id] ||= []).push(h); });
+    return byProduct;
+  } catch { return {}; }
+}
+
+// Resolves the cost price effective on `orderDate` (a 'YYYY-MM-DD' string).
+// `history` must be sorted newest-first. Returns a Number, or `fallback` when
+// there is no usable history.
+export function effectiveCostPrice(history, orderDate, fallback) {
+  if (Array.isArray(history) && history.length) {
+    if (orderDate) {
+      for (const h of history) {                // newest first
+        if (orderDate >= h.effective_from) return Number(h.cost_price);
+      }
+    }
+    return Number(history[history.length - 1].cost_price); // predates all → oldest
+  }
+  return fallback;
+}
+
+// Same resolution but for shipping (history rows may carry a shipping_cost).
+export function effectiveShippingCost(history, orderDate, fallback) {
+  if (Array.isArray(history) && history.length) {
+    const pick = (h) => (h && h.shipping_cost != null ? Number(h.shipping_cost) : fallback);
+    if (orderDate) {
+      for (const h of history) {
+        if (orderDate >= h.effective_from) return pick(h);
+      }
+    }
+    return pick(history[history.length - 1]);
+  }
+  return fallback;
+}
+
 export function isOrderDelivered(o) {
   const rawTags = (o.tags || '').split(',').map(t => t.trim().toLowerCase());
   const syntheticSS = rawTags.find(t => t.startsWith('__ss:'));
@@ -184,19 +239,34 @@ export function calcPL(revenue, deliveredCount, adCost, fulfilledCount = 0, item
 
   if (items && items.length > 0) {
     items.forEach(item => {
-      const lookupKey = item.sku || ('TITLE:' + item.title);
-      const pricing = productPricing[lookupKey] || { cp: PRODUCT_COST, shipping: SHIPPING_COST };
+      // Title fallback: products whose line items carry no SKU are indexed by
+      // 'TITLE:<title>' in the pricing map, so resolve both the SKU and TITLE key.
+      const skuKey = item.sku;
+      const titleKey = item.title ? 'TITLE:' + item.title : null;
+      const pricing =
+        (skuKey && productPricing[skuKey]) ||
+        (titleKey && productPricing[titleKey]) ||
+        { cp: PRODUCT_COST, shipping: SHIPPING_COST };
       const packSize = item.packSize || 1;
       // Owner-defined pack override: cost is for the whole pack, so don't multiply by packSize again.
-      const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
+      const baseKey = (skuKey && productPricing[skuKey]) ? skuKey : (titleKey || skuKey);
+      const packOverride = packSize > 1 ? productPricing[`__pack__${baseKey}__${packSize}`] : null;
+      // Cost effective on this order's date (falls back to the entry's current cp).
+      const cpUnit = effectiveCostPrice(pricing.history, item.orderDate, pricing.cp);
+      const packCp = packOverride
+        ? effectiveCostPrice(packOverride.history, item.orderDate, packOverride.cp)
+        : null;
       if (item.isDelivered) {
         totalProductCost += packOverride
-          ? packOverride.cp * item.quantity
-          : pricing.cp * packSize * item.quantity;
+          ? packCp * item.quantity
+          : cpUnit * packSize * item.quantity;
       }
       if (item.isFulfilled) {
-        const shipPerUnit = packOverride && packOverride.shipping != null ? packOverride.shipping : pricing.shipping;
-        totalLogisticsCost += shipPerUnit * item.quantity;
+        const baseShip = pricing.shipping;
+        const shipPerUnit = packOverride && packOverride.shipping != null
+          ? effectiveShippingCost(packOverride.history, item.orderDate, packOverride.shipping)
+          : effectiveShippingCost(pricing.history, item.orderDate, baseShip);
+        totalLogisticsCost += (shipPerUnit != null ? shipPerUnit : SHIPPING_COST) * item.quantity;
       }
     });
     if (totalProductCost === 0 && deliveredCount > 0) totalProductCost = deliveredCount * PRODUCT_COST;

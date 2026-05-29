@@ -4,7 +4,8 @@ import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
   isOrderDelivered, isOrderPrepaidRevenue, categorizeOrders,
   getPaymentCounts, getRevenueBreakdown, getTotalRevenue, calcPL,
-  PREPAID_LAUNCH_DATE, PRODUCT_COST, SHIPPING_COST, extractPackSize
+  PREPAID_LAUNCH_DATE, PRODUCT_COST, SHIPPING_COST, extractPackSize,
+  effectiveCostPrice, effectiveShippingCost
 } from '../utils/dashboardUtils';
 
 const today = () => toDateStr(new Date());
@@ -74,12 +75,13 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, adProductBre
           null;
         // Pack override (owner-defined): total cost is for the whole pack, so derive per-unit for display.
         const packOverride = packSize > 1 ? pp[`__pack__${lookupKey}__${packSize}`] : null;
+        // Cost effective on this day (uses dated cost history when present).
         const cpPerUnit = packOverride
-          ? packOverride.cp / packSize
-          : (pricing ? (pricing.cp ?? PRODUCT_COST) : PRODUCT_COST);
+          ? effectiveCostPrice(packOverride.history, dateStr, packOverride.cp) / packSize
+          : (pricing ? effectiveCostPrice(pricing.history, dateStr, pricing.cp ?? PRODUCT_COST) : PRODUCT_COST);
         const shippingPerUnit = packOverride && packOverride.shipping != null
-          ? packOverride.shipping
-          : (pricing ? (pricing.shipping ?? SHIPPING_COST) : SHIPPING_COST);
+          ? effectiveShippingCost(packOverride.history, dateStr, packOverride.shipping)
+          : (pricing ? effectiveShippingCost(pricing.history, dateStr, pricing.shipping ?? SHIPPING_COST) : SHIPPING_COST);
         productMap[key] = {
           title: li.title || 'Unknown', variantTitle, sku: li.sku || '',
           pricingFound: !!pricing || !!packOverride, qty: 0, revenue: 0, packSize,
@@ -622,7 +624,9 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
     const pricing = productPricing[lookupKey] || { cp: PRODUCT_COST };
     const packSize = item.packSize || 1;
     const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
-    const costPerUnit = packOverride ? packOverride.cp : pricing.cp * packSize;
+    const costPerUnit = packOverride
+      ? effectiveCostPrice(packOverride.history, item.orderDate, packOverride.cp)
+      : effectiveCostPrice(pricing.history, item.orderDate, pricing.cp) * packSize;
     const qty = parseInt(item.quantity || 1);
     const variantTitle = item.variant_title || '';
     const key = (item.title || 'Unknown') + (variantTitle ? '||' + variantTitle : '');

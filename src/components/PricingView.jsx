@@ -127,11 +127,18 @@ export default function PricingView({ store }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newProduct, setNewProduct] = useState({ title: '', sku: '', cost_price: 0, selling_price: 0, shipping_cost: 135 });
   const [packModal, setPackModal] = useState(null); // { parent, pack_size, cost_price, selling_price }
+  const [costDateModal, setCostDateModal] = useState(null); // { mode:'single'|'all', items:[...], date:'YYYY-MM-DD' }
   const [localHidden, setLocalHidden] = useState({});
 
   function showToast(msg, type = 'success') {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
+  }
+
+  // Local YYYY-MM-DD (avoids UTC off-by-one from toISOString()).
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   useEffect(() => {
@@ -158,7 +165,10 @@ export default function PricingView({ store }) {
       .order('title');
     setLoading(false);
     if (error) { showToast('Failed to load: ' + error.message, 'error'); return; }
-    setProducts((data || []).map(p => ({ ...p, _dirty: false })));
+    setProducts((data || []).map(p => ({
+      ...p, _dirty: false,
+      _origCost: p.cost_price, _origShip: p.shipping_cost,
+    })));
   }
 
   // Real Shopify sync via backend.
@@ -186,42 +196,87 @@ export default function PricingView({ store }) {
     ));
   }
 
+  // True when the cost or shipping changed vs what was loaded — these are the
+  // values that flow into PNL, so they need an "effective from" date.
+  function costChanged(p) {
+    return Number(p.cost_price) !== Number(p._origCost) ||
+           Number(p.shipping_cost) !== Number(p._origShip);
+  }
+
+  // Writes a dated cost entry so historical orders keep their old cost and
+  // orders on/after `effectiveFrom` use the new one.
+  function writeCostHistory(p, effectiveFrom) {
+    return supabase.from('product_cost_history').upsert({
+      product_id: p.id,
+      store_id: store.id,
+      cost_price: Number(p.cost_price) || 0,
+      shipping_cost: Number(p.shipping_cost) || 0,
+      effective_from: effectiveFrom,
+    }, { onConflict: 'product_id,effective_from' });
+  }
+
+  // Persists the products rows + (when cost/shipping changed) a dated history row.
+  async function persistSave(items, effectiveFrom) {
+    const ops = [];
+    items.forEach(p => {
+      ops.push(supabase.from('products').update({
+        cost_price: p.cost_price,
+        selling_price: p.selling_price,
+        shipping_cost: p.shipping_cost,
+      }).eq('id', p.id));
+      if (effectiveFrom && costChanged(p)) ops.push(writeCostHistory(p, effectiveFrom));
+    });
+    const results = await Promise.all(ops);
+    return results.filter(r => r.error);
+  }
+
+  function markSaved(ids) {
+    setProducts(prev => prev.map(p => ids.includes(p.id)
+      ? { ...p, _dirty: false, _origCost: p.cost_price, _origShip: p.shipping_cost }
+      : p));
+  }
+
   async function saveSingle(product) {
-    setSavingId(product.id);
-    const { error } = await supabase
-      .from('products')
-      .update({
-        cost_price: product.cost_price,
-        selling_price: product.selling_price,
-        shipping_cost: product.shipping_cost,
-      })
-      .eq('id', product.id);
-    setSavingId(null);
-    if (error) showToast('Save failed: ' + error.message, 'error');
-    else {
-      setProducts(prev => prev.map(p => p.id === product.id ? { ...p, _dirty: false } : p));
-      showToast(`Saved: ${product.title}`);
+    // Cost/shipping change → ask for the effective-from date first.
+    if (costChanged(product)) {
+      setCostDateModal({ mode: 'single', items: [product], date: today() });
+      return;
     }
+    setSavingId(product.id);
+    const errors = await persistSave([product], null);
+    setSavingId(null);
+    if (errors.length) showToast('Save failed: ' + errors[0].error.message, 'error');
+    else { markSaved([product.id]); showToast(`Saved: ${product.title}`); }
   }
 
   async function saveAll() {
     const dirty = products.filter(p => p._dirty);
     if (!dirty.length) { showToast('No changes to save'); return; }
+    // If any dirty product changed its cost/shipping, collect one effective date.
+    if (dirty.some(costChanged)) {
+      setCostDateModal({ mode: 'all', items: dirty, date: today() });
+      return;
+    }
     setSavingAll(true);
-    const updates = dirty.map(p =>
-      supabase.from('products').update({
-        cost_price: p.cost_price,
-        selling_price: p.selling_price,
-        shipping_cost: p.shipping_cost,
-      }).eq('id', p.id)
-    );
-    const results = await Promise.all(updates);
-    const errors = results.filter(r => r.error);
+    const errors = await persistSave(dirty, null);
     setSavingAll(false);
     if (errors.length) showToast(`${errors.length} save(s) failed`, 'error');
+    else { markSaved(dirty.map(p => p.id)); showToast(`Saved ${dirty.length} product(s) ✓`); }
+  }
+
+  // Confirms the effective-from date from the modal and persists everything.
+  async function confirmCostDate() {
+    if (!costDateModal) return;
+    const { items, date, mode } = costDateModal;
+    if (!date) { showToast('Pick an effective-from date', 'error'); return; }
+    if (mode === 'single') setSavingId(items[0].id); else setSavingAll(true);
+    const errors = await persistSave(items, date);
+    setSavingId(null); setSavingAll(false);
+    setCostDateModal(null);
+    if (errors.length) showToast(`${errors.length} save(s) failed`, 'error');
     else {
-      setProducts(prev => prev.map(p => ({ ...p, _dirty: false })));
-      showToast(`Saved ${dirty.length} product(s) ✓`);
+      markSaved(items.map(p => p.id));
+      showToast(`Saved ${items.length} product(s) — cost effective ${date} ✓`);
     }
   }
 
@@ -248,7 +303,7 @@ export default function PricingView({ store }) {
       status: 'active',
     }]).select().single();
     if (error) { showToast('Failed: ' + error.message, 'error'); return; }
-    setProducts(prev => [...prev, { ...data, _dirty: false }]);
+    setProducts(prev => [...prev, { ...data, _dirty: false, _origCost: data.cost_price, _origShip: data.shipping_cost }]);
     setShowAddModal(false);
     setNewProduct({ title: '', sku: '', cost_price: 0, selling_price: 0, shipping_cost: 135 });
     showToast('Product added!');
@@ -280,7 +335,7 @@ export default function PricingView({ store }) {
       pack_size: Number(pack_size),
     }]).select().single();
     if (error) { showToast('Failed to create pack: ' + error.message, 'error'); return; }
-    setProducts(prev => [...prev, { ...data, _dirty: false }]);
+    setProducts(prev => [...prev, { ...data, _dirty: false, _origCost: data.cost_price, _origShip: data.shipping_cost }]);
     setPackModal(null);
     showToast(`Pack of ${pack_size} added`);
   }
@@ -691,6 +746,44 @@ export default function PricingView({ store }) {
             <div style={{ display:'flex', gap:'10px', marginTop:'20px' }}>
               <button onClick={()=>setPackModal(null)} style={{ flex:1, padding:'11px', borderRadius:'10px', background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', color:'rgba(255,255,255,0.6)', cursor:'pointer', fontWeight:600, fontSize:'13px' }}>Cancel</button>
               <button onClick={createPack} style={{ flex:2, padding:'11px', borderRadius:'10px', border:'none', background:'linear-gradient(135deg,rgba(167,139,250,1),rgba(56,189,248,1))', color:'#000', fontWeight:700, fontSize:'13px', cursor:'pointer' }}>Create Pack</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {costDateModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', backdropFilter:'blur(8px)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
+          <div style={{ background:'oklch(0.18 0.03 270)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'20px', padding:'28px', width:'100%', maxWidth:'460px', boxShadow:'0 24px 60px rgba(0,0,0,0.6)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }}>
+              <h3 style={{ fontFamily:'Outfit', fontSize:'18px', fontWeight:800, color:'#fff', margin:0 }}>Cost effective from</h3>
+              <button onClick={()=>setCostDateModal(null)} style={{ background:'transparent', border:'none', color:'rgba(255,255,255,0.4)', cursor:'pointer', padding:4 }}>
+                <X size={18}/>
+              </button>
+            </div>
+            <p style={{ fontSize:'13px', color:'rgba(255,255,255,0.55)', margin:'0 0 18px 0', lineHeight:1.5 }}>
+              {costDateModal.mode === 'single'
+                ? <>New cost for <strong style={{ color:'#fff' }}>{costDateModal.items[0].title}</strong> applies to orders on/after this date. Older orders keep their previous cost.</>
+                : <>New costs apply to orders on/after this date for <strong style={{ color:'#fff' }}>{costDateModal.items.filter(costChanged).length}</strong> product(s). Older orders keep their previous cost.</>}
+            </p>
+
+            <div style={{ marginBottom:'16px' }}>
+              <label style={{ fontSize:'12px', fontWeight:600, color:'rgba(255,255,255,0.4)', display:'block', marginBottom:'6px', textTransform:'uppercase', letterSpacing:'0.5px' }}>Effective from *</label>
+              <input
+                type="date"
+                value={costDateModal.date}
+                max={today()}
+                onChange={e=>setCostDateModal(m=>({ ...m, date: e.target.value }))}
+                style={{ width:'100%', padding:'10px 12px', borderRadius:10, border:'1px solid rgba(255,255,255,0.12)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:14, outline:'none', colorScheme:'dark' }}
+              />
+              <div style={{ display:'flex', gap:8, marginTop:10 }}>
+                <button onClick={()=>setCostDateModal(m=>({ ...m, date: today() }))} style={{ padding:'6px 12px', borderRadius:8, fontSize:12, fontWeight:600, background:'rgba(56,189,248,0.12)', border:'1px solid rgba(56,189,248,0.3)', color:'rgba(56,189,248,1)', cursor:'pointer' }}>Today</button>
+                <button onClick={()=>setCostDateModal(m=>({ ...m, date: '2000-01-01' }))} style={{ padding:'6px 12px', borderRadius:8, fontSize:12, fontWeight:600, background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.1)', color:'rgba(255,255,255,0.6)', cursor:'pointer' }}>All history</button>
+              </div>
+            </div>
+
+            <div style={{ display:'flex', gap:'10px', marginTop:'20px' }}>
+              <button onClick={()=>setCostDateModal(null)} style={{ flex:1, padding:'11px', borderRadius:'10px', background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', color:'rgba(255,255,255,0.6)', cursor:'pointer', fontWeight:600, fontSize:'13px' }}>Cancel</button>
+              <button onClick={confirmCostDate} disabled={savingAll || savingId!=null} style={{ flex:2, padding:'11px', borderRadius:'10px', border:'none', background:'linear-gradient(135deg,rgba(167,139,250,1),rgba(56,189,248,1))', color:'#000', fontWeight:700, fontSize:'13px', cursor:'pointer', opacity:(savingAll||savingId!=null)?0.6:1 }}>Save with this date</button>
             </div>
           </div>
         </div>

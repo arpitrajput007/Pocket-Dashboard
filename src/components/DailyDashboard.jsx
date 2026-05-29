@@ -6,7 +6,7 @@ import { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal }
 import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
   categorizeOrders, getPaymentCounts, getRevenueBreakdown, getTotalRevenue, calcPL,
-  PREPAID_LAUNCH_DATE, isOrderPrepaidRevenue, isOrderDelivered, extractPackSize
+  PREPAID_LAUNCH_DATE, isOrderPrepaidRevenue, isOrderDelivered, extractPackSize, loadCostHistory
 } from '../utils/dashboardUtils';
 
 const today = () => toDateStr(new Date());
@@ -69,6 +69,9 @@ export default function DailyDashboard({ store, refreshTrigger }) {
         .eq('store_id', store.id);
       if (error) throw error;
 
+      // Time-effective cost history keyed by product_id (newest first per product).
+      const costHistory = await loadCostHistory(supabase, store.id);
+
       const baseById = new Map();
       (data || []).forEach(p => { if (!p.parent_product_id) baseById.set(p.id, p); });
 
@@ -81,22 +84,28 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       const pricing = {};
       (data || []).forEach(p => {
         if (!p.parent_product_id) {
-          if (p.sku) {
-            pricing[p.sku] = {
-              cp: Number(p.cost_price) || 0,
-              sp: Number(p.selling_price) || 0,
-              shipping: Number(p.shipping_cost) || 0,
-              title: p.title,
-            };
-          }
+          const entry = {
+            cp: Number(p.cost_price) || 0,
+            sp: Number(p.selling_price) || 0,
+            shipping: Number(p.shipping_cost) || 0,
+            title: p.title,
+            history: costHistory[p.id] || null,
+          };
+          // Index by SKU (preferred) and by TITLE so line items without a SKU
+          // still resolve their real cost instead of falling back to the default.
+          if (p.sku) pricing[p.sku] = entry;
+          if (p.title) pricing['TITLE:' + p.title] = entry;
         } else {
-          // Pack row — index by parent SKU + pack size.
+          // Pack row — index by parent SKU + pack size (and parent TITLE).
           const parent = baseById.get(p.parent_product_id);
-          if (parent?.sku && p.pack_size > 1) {
-            pricing[`__pack__${parent.sku}__${p.pack_size}`] = {
+          if (parent && p.pack_size > 1) {
+            const packEntry = {
               cp: Number(p.cost_price) || 0,
               shipping: Number(p.shipping_cost) || 0,
+              history: costHistory[p.id] || null,
             };
+            if (parent.sku) pricing[`__pack__${parent.sku}__${p.pack_size}`] = packEntry;
+            if (parent.title) pricing[`__pack__TITLE:${parent.title}__${p.pack_size}`] = packEntry;
           }
         }
       });
@@ -203,7 +212,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       dayOrders.forEach(o => {
         const isCounted = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
         const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
-        lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize: extractPackSize(li.variant_title), isDelivered: isCounted, isFulfilled: isCounted }));
+        const orderDate = getOrderDateIST(o);
+        lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize: extractPackSize(li.variant_title), orderDate, isDelivered: isCounted, isFulfilled: isCounted }));
       });
       const pl = calcPL(rev, tagsCounts['Delivered']||0, ad, tagsCounts['Fulfilled']||0, allItems, productPricing);
 
@@ -329,11 +339,12 @@ export default function DailyDashboard({ store, refreshTrigger }) {
             const isCounted = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
             const isDel = isOrderDelivered(o);
             const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
+            const orderDate = getOrderDateIST(o);
             lineItems.forEach(li => {
               const packSize = extractPackSize(li.variant_title);
               itemsCount += parseInt(li.quantity || 1) * packSize; // count actual units (pack size × qty)
-              allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize, isDelivered: isCounted, isFulfilled: isCounted });
-              if (isDel) deliveredItems.push({ ...li, packSize });
+              allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize, orderDate, isDelivered: isCounted, isFulfilled: isCounted });
+              if (isDel) deliveredItems.push({ ...li, packSize, orderDate });
             });
           });
           const pl = calcPL(rev, tCounts['Delivered']||0, ad, tCounts['Fulfilled']||0, allItems, productPricing);

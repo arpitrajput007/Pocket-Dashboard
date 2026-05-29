@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { dashboardCache } from '../utils/dashboardCache';
-import { extractPackSize } from '../utils/dashboardUtils';
+import { extractPackSize, loadCostHistory, effectiveCostPrice, effectiveShippingCost } from '../utils/dashboardUtils';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 
@@ -37,8 +37,9 @@ export default function AllTimeView({ store, refreshTrigger }) {
     if (!store?.id) return;
     const { data } = await supabase.from('products').select('*').eq('store_id', store.id);
     if (data) {
+      const history = await loadCostHistory(supabase, store.id);
       const map = {};
-      data.forEach(p => { map[p.title] = p; map[p.sku] = p; });
+      data.forEach(p => { p._costHistory = history[p.id] || null; map[p.title] = p; map[p.sku] = p; });
       setPricing(map);
     }
   }
@@ -89,10 +90,11 @@ export default function AllTimeView({ store, refreshTrigger }) {
       if (isDel) monthMap[mKey].delivered++;
       if (isCanc) monthMap[mKey].canceled++;
       
+      const orderDate = (o.created_at || '').slice(0, 10);
       (o.line_items || []).forEach(item => {
         const p = pricing[item.title] || pricing[item.sku] || {};
-        const cp = parseFloat(p.cost_price || 555);
-        const ship = parseFloat(p.shipping_cost || 135);
+        const cp = effectiveCostPrice(p._costHistory, orderDate, parseFloat(p.cost_price ?? 555));
+        const ship = effectiveShippingCost(p._costHistory, orderDate, parseFloat(p.shipping_cost ?? 135));
         const qty = item.quantity || 0;
         const packSize = extractPackSize(item.variant_title);
 

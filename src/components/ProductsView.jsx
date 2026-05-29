@@ -4,6 +4,7 @@ import {
   Search, Eye, EyeOff, TrendingUp, TrendingDown,
   Package, RefreshCw, Download, AlertCircle, ChevronDown, ChevronUp
 } from 'lucide-react';
+import { loadCostHistory, effectiveCostPrice, effectiveShippingCost } from '../utils/dashboardUtils';
 
 const fmt = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
 
@@ -56,8 +57,9 @@ export default function ProductsView({ store, refreshTrigger }) {
     if (!store?.id) return;
     const { data } = await supabase.from('products').select('*').eq('store_id', store.id);
     if (data) {
+      const history = await loadCostHistory(supabase, store.id);
       const map = {};
-      data.forEach(p => { map[p.title] = p; map[p.sku] = p; });
+      data.forEach(p => { p._costHistory = history[p.id] || null; map[p.title] = p; map[p.sku] = p; });
       setPricing(map);
     }
   }
@@ -84,22 +86,30 @@ export default function ProductsView({ store, refreshTrigger }) {
       const tags = (order.tags || []);
       const tagStr = Array.isArray(tags) ? tags.join(',') : tags;
       const isDelivered = tagStr.toLowerCase().includes('delivered');
+      const orderDate = (order.created_at || '').slice(0, 10);
       items.forEach(item => {
         const title = item.title || 'Unknown';
-        if (!stats[title]) stats[title] = { title, sku: item.sku || '', sold: 0, revenue: 0, delivered: 0 };
+        if (!stats[title]) stats[title] = { title, sku: item.sku || '', sold: 0, revenue: 0, delivered: 0, cost: 0 };
         stats[title].sold += (item.quantity || 0);
         if (isDelivered) {
-          stats[title].revenue += (item.quantity || 0) * parseFloat(item.price || 0);
-          stats[title].delivered += (item.quantity || 0);
+          const qty = item.quantity || 0;
+          // Cost effective on the order date (dated cost history when present).
+          const p = pricing[title] || pricing[item.sku] || {};
+          const cp = effectiveCostPrice(p._costHistory, orderDate, parseFloat(p.cost_price ?? 555));
+          const ship = effectiveShippingCost(p._costHistory, orderDate, parseFloat(p.shipping_cost ?? 135));
+          stats[title].revenue += qty * parseFloat(item.price || 0);
+          stats[title].delivered += qty;
+          stats[title].cost += qty * (cp + ship);
         }
       });
     });
 
     return Object.values(stats).map(s => {
       const p = pricing[s.title] || pricing[s.sku] || {};
-      const cp = parseFloat(p.cost_price || 555);
-      const ship = parseFloat(p.shipping_cost || 135);
-      const cost = s.delivered * (cp + ship);
+      // Display columns show the current/latest cost; `s.cost` is the date-accurate total.
+      const cp = parseFloat(p.cost_price ?? 555);
+      const ship = parseFloat(p.shipping_cost ?? 135);
+      const cost = s.cost;
       const profit = s.revenue - cost;
       const margin = s.revenue > 0 ? (profit / s.revenue * 100) : 0;
       return { ...s, cp, ship, cost, profit, margin };
