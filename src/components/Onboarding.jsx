@@ -79,8 +79,10 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
   const [accessToken, setAccessToken] = useState('');
   const [themeColor, setThemeColor]   = useState('#6366f1');
   const [showToken, setShowToken]     = useState(false);
-  const [syncFromType, setSyncFromType] = useState('all');
-  const [syncFromDate, setSyncFromDate] = useState('2000-01-01');
+  const [syncFromType, setSyncFromType] = useState('90d');
+  const [syncFromDate, setSyncFromDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0];
+  });
   const [loading, setLoading]         = useState(false);
   const [connectError, setConnectError] = useState('');
   const [connectStatus, setConnectStatus] = useState('');
