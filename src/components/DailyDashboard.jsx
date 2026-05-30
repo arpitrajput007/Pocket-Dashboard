@@ -15,6 +15,9 @@ const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); retur
 export default function DailyDashboard({ store, refreshTrigger }) {
   const [orders, setOrders] = useState([]);
   const [adCosts, setAdCosts] = useState({});
+  // Shiprocket shipments map: { [orderName]: { status, courier, awb, raw_status } }
+  // Populated when the store has shiprocket_connected = true.
+  const [shipmentsMap, setShipmentsMap] = useState({});
   // Per-product ad-spend splits keyed by date. Synced via ad_costs.product_breakdown.
   // Shape: { [date]: { meta: { "Title": amount }, google: {...} } }
   // Legacy flat shape { "Title": amount } is still accepted and shown under the
@@ -161,6 +164,19 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       setAdCosts(newAdCosts);
       setAdProductBreakdowns(newProductBreakdowns);
       dashboardCache.set(adCacheKey, newAdCosts);
+
+      // ── Shiprocket shipments (when connected) ────────────────────────────
+      // Fetch all shipments for the store — lightweight status rows, no date filter
+      // needed because we match by order name (not date).
+      if (store.shiprocket_connected) {
+        const { data: smData } = await supabase
+          .from('shipments')
+          .select('shopify_order_name, status, courier, awb, raw_status')
+          .eq('store_id', store.id);
+        const map = {};
+        (smData || []).forEach(s => { if (s.shopify_order_name) map[s.shopify_order_name] = s; });
+        setShipmentsMap(map);
+      }
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
@@ -205,12 +221,12 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     for (let d = new Date(dEnd); d >= dStart; d.setDate(d.getDate() - 1)) {
       const dateStr = toDateStr(d);
       const dayOrders = orders.filter(o => getOrderDateIST(o) === dateStr);
-      const tagsCounts = categorizeOrders(dayOrders);
-      const rev = getTotalRevenue(dayOrders);
+      const tagsCounts = categorizeOrders(dayOrders, shipmentsMap);
+      const rev = getTotalRevenue(dayOrders, shipmentsMap);
       const ad = adCosts[dateStr] || 0;
       const allItems = [];
       dayOrders.forEach(o => {
-        const isCounted = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
+        const isCounted = isOrderDelivered(o, shipmentsMap) || isOrderPrepaidRevenue(o);
         const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
         const orderDate = getOrderDateIST(o);
         lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize: extractPackSize(li.variant_title), orderDate, isDelivered: isCounted, isFulfilled: isCounted }));
@@ -329,15 +345,15 @@ export default function DailyDashboard({ store, refreshTrigger }) {
         {error && <div style={{ padding: 40, textAlign: 'center', color: 'var(--loss-color)' }}>{error}</div>}
         {(!loading || orders.length > 0) && !error && dayBlocks.map(dateStr => {
           const dayOrders = orders.filter(o => getOrderDateIST(o) === dateStr);
-          const tCounts = categorizeOrders(dayOrders);
-          const rev = getTotalRevenue(dayOrders);
+          const tCounts = categorizeOrders(dayOrders, shipmentsMap);
+          const rev = getTotalRevenue(dayOrders, shipmentsMap);
           const ad = adCosts[dateStr] || 0;
           const allItems = [];
           const deliveredItems = []; // items from delivered orders only (for the Delivered modal)
           let itemsCount = 0; // total UNITS across ALL orders (for CPP and Number of Items card)
           dayOrders.forEach(o => {
-            const isCounted = isOrderDelivered(o) || isOrderPrepaidRevenue(o);
-            const isDel = isOrderDelivered(o);
+            const isCounted = isOrderDelivered(o, shipmentsMap) || isOrderPrepaidRevenue(o);
+            const isDel = isOrderDelivered(o, shipmentsMap);
             const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
             const orderDate = getOrderDateIST(o);
             lineItems.forEach(li => {
@@ -355,7 +371,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
 
           const filteredOrders = dayOrders.filter(o => {
             if (filterKey === 'all' || filterKey === 'orders') return true;
-            const tc = categorizeOrders([o]);
+            const tc = categorizeOrders([o], shipmentsMap);
             if (filterKey === 'fulfilled') return tc['Fulfilled'] > 0;
             if (filterKey === 'delivered') return tc['Delivered'] > 0;
             if (filterKey === 'in-transit') return tc['In Transit'] > 0;
@@ -399,7 +415,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                 <MetricCard label="Ad Spend" value={fmt(ad)} glow="white" note="Click to edit breakdown" onClick={() => setModalState({ type: 'ad', date: dateStr })} />
                 {dateStr >= PREPAID_LAUNCH_DATE && <MetricCard label="Prepaid Orders" value={pCounts.prepaid} color="#818cf8" glow="indigo" active={filterKey === 'prepaid'} onClick={() => toggleDayFilter(dateStr, 'prepaid')} />}
                 {dateStr >= PREPAID_LAUNCH_DATE && <MetricCard label="Cash Orders" value={pCounts.cash} color="#fb923c" glow="amber" active={filterKey === 'cash'} onClick={() => toggleDayFilter(dateStr, 'cash')} />}
-                <MetricCard label="Net Profit" value={fmt(pl.profit)} color={pl.profit >= 0 ? 'var(--profit-color)' : 'var(--loss-color)'} glow="white" note="Click for full breakdown" badge onClick={() => setModalState({ type: 'netprofit', date: dateStr, prettyDate: pretty, pl, tCounts, pCounts, itemsCount, cpp, totalOrders: dayOrders.length, revBreakdown: getRevenueBreakdown(dayOrders), grossSales: dayOrders.reduce((s, o) => s + parseFloat(o.total_price || 0), 0), allItems, productPricing })} />
+                <MetricCard label="Net Profit" value={fmt(pl.profit)} color={pl.profit >= 0 ? 'var(--profit-color)' : 'var(--loss-color)'} glow="white" note="Click for full breakdown" badge onClick={() => setModalState({ type: 'netprofit', date: dateStr, prettyDate: pretty, pl, tCounts, pCounts, itemsCount, cpp, totalOrders: dayOrders.length, revBreakdown: getRevenueBreakdown(dayOrders, shipmentsMap), grossSales: dayOrders.reduce((s, o) => s + parseFloat(o.total_price || 0), 0), allItems, productPricing })} />
                 <MetricCard label="PNL of Products" value="📊" color="#fbbf24" glow="yellow" note="Click for breakdown" badge onClick={() => setModalState({ type: 'pnl', date: dateStr, prettyDate: pretty })} />
               </div>
 
@@ -412,15 +428,26 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                         {filteredOrders.length === 0 ? <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No orders match this filter</td></tr> :
                           filteredOrders.slice(0, 50).map(o => {
                             const isPre = isOrderPrepaidRevenue(o);
-                            const isDel = isOrderDelivered(o);
+                            const isDel = isOrderDelivered(o, shipmentsMap);
                             const revCounted = isDel || isPre;
                             const isExpanded = expandedOrders.has(o.id);
+                            const srShipment = shipmentsMap[o.name];
+                            // Mismatch: Shiprocket has an active status that differs from Shopify tag
+                            const shopifyDel = isOrderDelivered(o, {});
+                            const srMismatch = srShipment && srShipment.status !== 'pending' &&
+                              ((srShipment.status === 'delivered') !== shopifyDel);
                             return (
                               <React.Fragment key={o.id}>
                                 <tr className={`order-row ${isExpanded ? 'expanded' : ''}`} onClick={() => toggleOrderExpanded(o.id)} style={{ cursor: 'pointer' }}>
                                   <td style={{ verticalAlign: 'top', paddingTop: 14 }}>
-                                    <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>{o.name}
-                                      <span style={{ fontSize: 10, fontWeight: 700, background: isPre ? 'rgba(129,140,248,0.15)' : 'rgba(251,146,60,0.15)', color: isPre ? '#818cf8' : '#fb923c', border: `1px solid ${isPre ? 'rgba(129,140,248,0.4)' : 'rgba(251,146,60,0.4)'}`, padding: '2px 7px', borderRadius: 4, marginLeft: 6 }}>{isPre ? 'PREPAID' : 'COD'}</span>
+                                    <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>{o.name}
+                                      <span style={{ fontSize: 10, fontWeight: 700, background: isPre ? 'rgba(129,140,248,0.15)' : 'rgba(251,146,60,0.15)', color: isPre ? '#818cf8' : '#fb923c', border: `1px solid ${isPre ? 'rgba(129,140,248,0.4)' : 'rgba(251,146,60,0.4)'}`, padding: '2px 7px', borderRadius: 4 }}>{isPre ? 'PREPAID' : 'COD'}</span>
+                                      {srShipment && srShipment.status !== 'pending' && (
+                                        <span title={`Shiprocket: ${srShipment.raw_status || srShipment.status}${srShipment.courier ? ' · ' + srShipment.courier : ''}${srShipment.awb ? ' · AWB: ' + srShipment.awb : ''}`} style={{ fontSize: 10, fontWeight: 700, background: 'rgba(124,58,237,0.12)', color: '#a78bfa', border: '1px solid rgba(124,58,237,0.3)', padding: '2px 7px', borderRadius: 4, cursor: 'help' }}>🚚 {srShipment.courier || 'Shiprocket'}</span>
+                                      )}
+                                      {srMismatch && (
+                                        <span title={`Shopify says ${shopifyDel ? 'Delivered' : 'Not Delivered'}, Shiprocket says ${srShipment.status}`} style={{ fontSize: 10, fontWeight: 700, background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)', padding: '2px 7px', borderRadius: 4, cursor: 'help' }}>⚠ Mismatch</span>
+                                      )}
                                     </div>
                                     {(o.order_items && o.order_items.length > 0) && (
                                       <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)', background: 'rgba(0,0,0,0.3)', padding: '8px 10px', borderRadius: 6 }}>
@@ -440,7 +467,38 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                                   <td style={{ verticalAlign: 'top', paddingTop: 14 }}>{o.created_at ? new Date(o.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</td>
                                 </tr>
                                 {isExpanded && (
-                                  <tr className="expanded-details"><td colSpan="7"><div style={{ padding: 16, background: 'rgba(0,0,0,0.2)', borderRadius: 8 }}>Details expanded</div></td></tr>
+                                  <tr className="expanded-details">
+                                    <td colSpan="7">
+                                      <div style={{ padding: '12px 16px', background: 'rgba(0,0,0,0.2)', borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        {/* Shiprocket carrier detail */}
+                                        {srShipment ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                                            <span style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 1 }}>🚚 Shiprocket</span>
+                                            <span style={{ fontSize: 12, color: 'var(--text-main)', fontWeight: 600 }}>{srShipment.raw_status || srShipment.status}</span>
+                                            {srShipment.courier && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>via {srShipment.courier}</span>}
+                                            {srShipment.awb && <span style={{ fontSize: 11, color: '#38bdf8', fontFamily: 'monospace' }}>AWB: {srShipment.awb}</span>}
+                                            {srMismatch && <span style={{ fontSize: 11, color: '#fbbf24', fontWeight: 600 }}>⚠ Differs from Shopify tags</span>}
+                                          </div>
+                                        ) : (
+                                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No Shiprocket record matched for this order.</div>
+                                        )}
+                                        {/* Line items */}
+                                        {(() => {
+                                          const lis = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
+                                          return lis.length > 0 ? (
+                                            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                              {lis.map((li, idx) => (
+                                                <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between' }}>
+                                                  <span>{li.quantity}× {li.title}{li.variant_title ? ` — ${li.variant_title}` : ''}</span>
+                                                  <span style={{ color: 'var(--text-main)' }}>{fmt(li.price * li.quantity)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : null;
+                                        })()}
+                                      </div>
+                                    </td>
+                                  </tr>
                                 )}
                               </React.Fragment>
                             );

@@ -96,15 +96,29 @@ export function effectiveShippingCost(history, orderDate, fallback) {
   return fallback;
 }
 
-export function isOrderDelivered(o) {
+/**
+ * isOrderDelivered — determines if an order counts as delivered.
+ * Priority: Shiprocket (carrier truth) > Shopify __ss: synthetic tag > plain tags.
+ * shipmentsMap: { [orderName]: { status, ... } } — pass empty object when not connected.
+ * When Shiprocket has a non-pending record, it wins unconditionally.
+ * When it has a 'pending' record (shipment created but not yet picked up) we fall
+ * through to Shopify tags so the order is still categorized correctly in transit views.
+ */
+export function isOrderDelivered(o, shipmentsMap = {}) {
+  // ── 1. Shiprocket source of truth ─────────────────────────────────────────
+  const shipment = shipmentsMap[o.name];
+  if (shipment && shipment.status && shipment.status !== 'pending') {
+    return shipment.status === 'delivered';
+  }
+
+  // ── 2. Shopify __ss: synthetic tag (set by our syncService) ───────────────
   const rawTags = (o.tags || '').split(',').map(t => t.trim().toLowerCase());
   const syntheticSS = rawTags.find(t => t.startsWith('__ss:'));
   const shipmentStatus = syntheticSS ? syntheticSS.replace('__ss:', '') : '';
 
-  // 1. Courier API explicitly confirmed delivery via __ss: tag → highest priority, always delivered
   if (shipmentStatus === 'delivered') return true;
 
-  // 2. Check for a plain "Delivered" tag (set by courier webhook, Shopify Flow, or manually)
+  // ── 3. Plain "Delivered" tag (manual / courier webhook) ───────────────────
   const hasDeliveredTag = rawTags.some(t =>
     !t.startsWith('__ss:') &&
     t.includes('delivered') &&
@@ -113,17 +127,14 @@ export function isOrderDelivered(o) {
   );
   if (!hasDeliveredTag) return false;
 
-  // 3. Has Delivered tag — only override it when the courier's __ss: status explicitly signals RTO/failure.
-  //    Plain "rto"-containing tags are NOT enough to cancel an explicit Delivered tag
-  //    (avoids mis-exclusion when orders have stale manual tags like "rto-pending" alongside "Delivered").
+  // Courier __ss: signals RTO/failure → override the plain Delivered tag
   const courierRTO = syntheticSS && (
     shipmentStatus.includes('rto') ||
     shipmentStatus === 'returned' ||
     shipmentStatus === 'failure' ||
     shipmentStatus === 'undelivered'
   );
-
-  // 4. When there is NO synthetic __ss: tag at all, plain RTO tags are still respected
+  // Plain RTO tags only respected when NO synthetic tag exists at all
   const plainRTO = !syntheticSS && rawTags.some(t =>
     !t.startsWith('__ss:') &&
     ((t.includes('rto') && !t.includes('rto_prediction')) || t.includes('undelivered'))
@@ -143,7 +154,11 @@ export function isOrderPrepaidRevenue(o) {
   return (o.financial_status || '').toLowerCase() === 'paid';
 }
 
-export function categorizeOrders(orders) {
+/**
+ * categorizeOrders — counts orders into status buckets for the metric cards.
+ * shipmentsMap: { [orderName]: { status } } — Shiprocket wins when non-pending.
+ */
+export function categorizeOrders(orders, shipmentsMap = {}) {
   const STATUS_TAGS = ['Delivered','Canceled','Attempted Delivery','In Transit','Out for Delivery',
     'Failed Delivery','Paid','Payment Pending','Unfulfilled','Fulfilled','RTO','Unreachable','RTO Prediction','Not Confirmed'];
   const counts = {};
@@ -151,13 +166,36 @@ export function categorizeOrders(orders) {
   counts['Other'] = 0;
 
   orders.forEach(o => {
+    // ── Shiprocket source of truth ─────────────────────────────────────────
+    const shipment = shipmentsMap[o.name];
+    const srStatus = shipment?.status;
+    if (srStatus && srStatus !== 'pending') {
+      // Use carrier status directly — no Shopify tag parsing needed
+      const isDel  = srStatus === 'delivered';
+      const isIT   = srStatus === 'in_transit';
+      const isOFD  = srStatus === 'out_for_delivery';
+      const isRTO  = srStatus === 'rto' || srStatus === 'undelivered';
+      const isCan  = srStatus === 'cancelled';
+      const isFul  = isDel || isIT || isOFD; // anything shipped counts as fulfilled
+
+      if (isFul)  counts['Fulfilled']++;
+      if (isDel)  counts['Delivered']++;
+      if (isIT)   counts['In Transit']++;
+      if (isOFD)  counts['Out for Delivery']++;
+      if (isRTO)  counts['RTO']++;
+      if (isCan)  counts['Canceled']++;
+      if (!isDel && !isIT && !isOFD && !isRTO && !isCan) counts['Other']++;
+      return; // skip Shopify tag logic entirely
+    }
+
+    // ── Shopify tag fallback ────────────────────────────────────────────────
     const rawTags = (o.tags || '').split(',').map(t => t.trim().toLowerCase());
     const fs = (o.fulfillment_status || '').toLowerCase();
     const fin = (o.financial_status || '').toLowerCase();
     const syntheticSS = rawTags.find(t => t.startsWith('__ss:'));
     const shipmentStatus = syntheticSS ? syntheticSS.replace('__ss:', '') : '';
 
-    const isDelivered = isOrderDelivered(o);
+    const isDelivered = isOrderDelivered(o, shipmentsMap);
     const isRTO = !isDelivered && rawTags.some(t =>
       !t.startsWith('__ss:') && ((t.includes('rto') && !t.includes('rto_prediction')) || t.includes('undelivered'))
     );
@@ -172,7 +210,6 @@ export function categorizeOrders(orders) {
     const isInTransit = ssInTransit && !ssOutForDel && !ssFailure && !ssDelivered && !isRTO;
     const isOutForDelivery = ssOutForDel && !ssFailure && !ssDelivered && !isRTO;
     const isFailedDelivery = ssFailure && !isRTO;
-    // isCanceled: check tags OR Shopify financial_status column directly
     const isCanceled =
       rawTags.some(t => t === 'canceled' || t === 'cancelled') ||
       fin === 'voided' || fin === 'refunded' ||
@@ -215,10 +252,10 @@ export function getPaymentCounts(orders) {
   return { prepaid, cash };
 }
 
-export function getRevenueBreakdown(orders) {
+export function getRevenueBreakdown(orders, shipmentsMap = {}) {
   let deliveredRev = 0, prepaidRev = 0, deliveredCount = 0, prepaidCount = 0;
   orders.forEach(o => {
-    const isDel = isOrderDelivered(o);
+    const isDel = isOrderDelivered(o, shipmentsMap);
     const isPre = isOrderPrepaidRevenue(o);
     if (!isDel && !isPre) return;
     let orderRev = parseFloat(o.total_price || 0);
@@ -228,8 +265,8 @@ export function getRevenueBreakdown(orders) {
   return { totalRevenue: deliveredRev + prepaidRev, deliveredRevenue: deliveredRev, prepaidRevenue: prepaidRev, deliveredCount, prepaidCount };
 }
 
-export function getTotalRevenue(orders) {
-  return getRevenueBreakdown(orders).totalRevenue;
+export function getTotalRevenue(orders, shipmentsMap = {}) {
+  return getRevenueBreakdown(orders, shipmentsMap).totalRevenue;
 }
 
 export function calcPL(revenue, deliveredCount, adCost, fulfilledCount = 0, items = [], productPricing = {}, actualDeliveredCount = null) {
