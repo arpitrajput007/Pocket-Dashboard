@@ -329,6 +329,108 @@ export default function AdvancedSettings({ store }) {
   return (
     <div style={{ animation: 'fadeInUp 0.35s ease forwards' }}>
 
+      {/* ── Store Connection Status (top of page) ──────────────────── */}
+      {store?.shopify_domain && (
+        <div style={{
+          marginBottom: '16px', padding: '20px', borderRadius: '16px',
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <div style={{
+            fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.3)',
+            textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px',
+          }}>
+            Store Connection Status
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '10px', height: '10px', borderRadius: '50%',
+              background: 'rgba(52,211,153,1)',
+              boxShadow: '0 0 10px rgba(52,211,153,0.6)',
+              animation: 'pulse-live 1.5s ease infinite',
+            }} />
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>
+                {store.store_name}
+              </div>
+              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' }}>
+                {store.shopify_domain}.myshopify.com · Connected
+              </div>
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{
+                fontSize: '11px', fontWeight: 700, padding: '4px 10px',
+                borderRadius: '999px',
+                background: store.plan_type === 'pro' ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.06)',
+                color: store.plan_type === 'pro' ? 'rgba(167,139,250,1)' : 'rgba(255,255,255,0.4)',
+                border: `1px solid ${store.plan_type === 'pro' ? 'rgba(167,139,250,0.3)' : 'rgba(255,255,255,0.1)'}`,
+              }}>
+                {store.plan_type === 'pro' ? '✦ PRO' : 'Free Plan'}
+              </span>
+              <ChevronRight size={16} color="rgba(255,255,255,0.2)" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Shipping Integration (Shiprocket) — top of page ─────────── */}
+      {store?.shopify_domain && (
+        <div style={{
+          marginBottom: '28px', padding: '20px', borderRadius: '16px',
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <div style={{
+            fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.3)',
+            textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px',
+          }}>
+            Shipping Integration
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+            <div style={{
+              width: '44px', height: '44px', borderRadius: '12px', flexShrink: 0,
+              background: srStatus.connected ? 'rgba(124,58,237,0.15)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${srStatus.connected ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Truck size={22} color={srStatus.connected ? 'rgba(167,139,250,1)' : 'rgba(255,255,255,0.4)'} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                Shiprocket
+                {srStatus.connected && (
+                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: 'rgba(52,211,153,0.15)', color: 'rgba(52,211,153,1)', border: '1px solid rgba(52,211,153,0.3)' }}>● CONNECTED</span>
+                )}
+              </div>
+              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
+                {srStatus.connected
+                  ? `${srStatus.shipmentCount} shipments synced${srStatus.lastSyncedAt ? ' · ' + new Date(srStatus.lastSyncedAt).toLocaleString() : ''}`
+                  : 'Connect to fetch carrier-verified delivery status (source of truth).'}
+              </div>
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {srStatus.connected ? (
+                <>
+                  <button onClick={handleShiprocketSync} disabled={srSyncing} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 16px', borderRadius: '10px', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.3)', color: 'rgba(167,139,250,1)', fontWeight: 600, fontSize: '13px', cursor: srSyncing ? 'default' : 'pointer', fontFamily: 'Outfit, sans-serif', opacity: srSyncing ? 0.6 : 1 }}>
+                    <RefreshCw size={14} style={srSyncing ? { animation: 'spin 0.8s linear infinite' } : undefined} />
+                    {srSyncing ? 'Syncing…' : 'Sync Now'}
+                  </button>
+                  <button onClick={handleShiprocketDisconnect} disabled={srBusy} style={{ padding: '9px 16px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>Disconnect</button>
+                </>
+              ) : (
+                <button onClick={() => { setSrError(null); setSrModalOpen(true); }} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 18px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))', color: '#fff', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>
+                  <Plug size={14} /> Connect
+                </button>
+              )}
+            </div>
+          </div>
+          {srError && !srModalOpen && (
+            <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(248,113,113,1)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <AlertCircle size={14} /> {srError}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
@@ -527,147 +629,6 @@ export default function AdvancedSettings({ store }) {
           );
         })}
       </div>
-
-      {/* Shopify Sync Status Card */}
-      {store?.shopify_domain && (
-        <div style={{
-          marginTop: '28px', padding: '20px', borderRadius: '16px',
-          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-        }}>
-          <div style={{
-            fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.3)',
-            textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px',
-          }}>
-            Store Connection Status
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              width: '10px', height: '10px', borderRadius: '50%',
-              background: 'rgba(52,211,153,1)',
-              boxShadow: '0 0 10px rgba(52,211,153,0.6)',
-              animation: 'pulse-live 1.5s ease infinite',
-            }} />
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>
-                {store.store_name}
-              </div>
-              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' }}>
-                {store.shopify_domain}.myshopify.com · Connected
-              </div>
-            </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{
-                fontSize: '11px', fontWeight: 700, padding: '4px 10px',
-                borderRadius: '999px',
-                background: store.plan_type === 'pro' ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.06)',
-                color: store.plan_type === 'pro' ? 'rgba(167,139,250,1)' : 'rgba(255,255,255,0.4)',
-                border: `1px solid ${store.plan_type === 'pro' ? 'rgba(167,139,250,0.3)' : 'rgba(255,255,255,0.1)'}`,
-              }}>
-                {store.plan_type === 'pro' ? '✦ PRO' : 'Free Plan'}
-              </span>
-              <ChevronRight size={16} color="rgba(255,255,255,0.2)" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Shipping Integration (Shiprocket) ─────────────────────── */}
-      {store?.shopify_domain && (
-        <div style={{
-          marginTop: '16px', padding: '20px', borderRadius: '16px',
-          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
-        }}>
-          <div style={{
-            fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.3)',
-            textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px',
-          }}>
-            Shipping Integration
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-            {/* Logo tile */}
-            <div style={{
-              width: '44px', height: '44px', borderRadius: '12px', flexShrink: 0,
-              background: srStatus.connected ? 'rgba(124,58,237,0.15)' : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${srStatus.connected ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.1)'}`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Truck size={22} color={srStatus.connected ? 'rgba(167,139,250,1)' : 'rgba(255,255,255,0.4)'} />
-            </div>
-
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                Shiprocket
-                {srStatus.connected && (
-                  <span style={{
-                    fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
-                    background: 'rgba(52,211,153,0.15)', color: 'rgba(52,211,153,1)',
-                    border: '1px solid rgba(52,211,153,0.3)',
-                  }}>● CONNECTED</span>
-                )}
-              </div>
-              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
-                {srStatus.connected
-                  ? `${srStatus.shipmentCount} shipments synced${srStatus.lastSyncedAt ? ' · ' + new Date(srStatus.lastSyncedAt).toLocaleString() : ''}`
-                  : 'Connect to fetch carrier-verified delivery status (source of truth).'}
-              </div>
-            </div>
-
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {srStatus.connected ? (
-                <>
-                  <button
-                    onClick={handleShiprocketSync}
-                    disabled={srSyncing}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '7px',
-                      padding: '9px 16px', borderRadius: '10px',
-                      background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.3)',
-                      color: 'rgba(167,139,250,1)', fontWeight: 600, fontSize: '13px',
-                      cursor: srSyncing ? 'default' : 'pointer', fontFamily: 'Outfit, sans-serif',
-                      opacity: srSyncing ? 0.6 : 1,
-                    }}
-                  >
-                    <RefreshCw size={14} style={srSyncing ? { animation: 'spin 0.8s linear infinite' } : undefined} />
-                    {srSyncing ? 'Syncing…' : 'Sync Now'}
-                  </button>
-                  <button
-                    onClick={handleShiprocketDisconnect}
-                    disabled={srBusy}
-                    style={{
-                      padding: '9px 16px', borderRadius: '10px',
-                      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
-                      color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px',
-                      cursor: 'pointer', fontFamily: 'Outfit, sans-serif',
-                    }}
-                  >
-                    Disconnect
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => { setSrError(null); setSrModalOpen(true); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '7px',
-                    padding: '9px 18px', borderRadius: '10px', border: 'none',
-                    background: 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))',
-                    color: '#fff', fontWeight: 600, fontSize: '13px',
-                    cursor: 'pointer', fontFamily: 'Outfit, sans-serif',
-                  }}
-                >
-                  <Plug size={14} /> Connect
-                </button>
-              )}
-            </div>
-          </div>
-
-          {srError && !srModalOpen && (
-            <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(248,113,113,1)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <AlertCircle size={14} /> {srError}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Shiprocket Connect Modal ──────────────────────────────── */}
       {srModalOpen && (
