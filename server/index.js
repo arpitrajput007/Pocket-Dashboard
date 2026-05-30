@@ -1042,10 +1042,42 @@ async function runAutoSync() {
   console.log('[AutoSync] ✅ Cycle complete.');
 }
 
-// Schedule: every 5 minutes
+// Schedule: every 5 minutes (Shopify)
 cron.schedule('*/5 * * * *', () => {
   console.log('[AutoSync] ⏰ Triggered');
   runAutoSync().catch(err => console.error('[AutoSync] Unhandled error:', err.message));
+});
+
+/**
+ * Auto-sync Shiprocket shipments — runs every 30 minutes.
+ * Only runs for stores that have Shiprocket connected.
+ * Staggered 5s between stores to avoid Shiprocket rate limits.
+ */
+async function runShiprocketAutoSync() {
+  const { data: stores } = await supabase
+    .from('stores')
+    .select('id, store_name')
+    .eq('is_active', true)
+    .eq('shiprocket_connected', true);
+
+  if (!stores || stores.length === 0) return;
+
+  console.log(`[SRAutoSync] Starting Shiprocket sync for ${stores.length} store(s)...`);
+  for (let i = 0; i < stores.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 5000));
+    try {
+      const result = await syncShiprocketShipments(stores[i].id);
+      console.log(`[SRAutoSync] ✅ ${stores[i].store_name}: ${result.totalSynced} shipments`);
+    } catch (err) {
+      console.error(`[SRAutoSync] ❌ ${stores[i].store_name}: ${err.message}`);
+    }
+  }
+}
+
+// Every 30 minutes
+cron.schedule('*/30 * * * *', () => {
+  console.log('[SRAutoSync] ⏰ Triggered');
+  runShiprocketAutoSync().catch(err => console.error('[SRAutoSync] Unhandled:', err.message));
 });
 
 // Keep-alive: Render free tier spins down after 15 min of inactivity, killing the cron job.
