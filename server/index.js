@@ -4,6 +4,7 @@ const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { OpenAI } = require('openai');
 const { syncStoreData } = require('./syncService');
+const { connectShiprocket, syncShiprocketShipments } = require('./shiprocketSyncService');
 const { encrypt, decrypt } = require('./cryptoUtils');
 
 const VITE_SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://missing.supabase.co';
@@ -896,6 +897,111 @@ Rules:
   } catch (err) {
     console.error('[AdOCR Error]', err.message);
     res.status(500).json({ error: 'OCR failed: ' + err.message });
+  }
+});
+
+// ============================================================================
+// SHIPROCKET INTEGRATION (Phase 1)
+// Connects a store's Shiprocket account to fetch carrier-verified shipment
+// status. Shiprocket is treated as the source of truth for delivery status.
+// ============================================================================
+
+/**
+ * POST /api/shiprocket/connect/:storeId
+ * Body: { email, password }  — the store owner's Shiprocket API-user credentials.
+ * Validates them with a live login before storing (encrypted).
+ */
+app.post('/api/shiprocket/connect/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  const { email, password } = req.body || {};
+  if (!storeId) return res.status(400).json({ error: 'storeId is required' });
+  if (!email || !password) return res.status(400).json({ error: 'Shiprocket email and password are required' });
+
+  try {
+    await connectShiprocket(storeId, email, password);
+    console.log(`[Shiprocket API] ✅ Connected store ${storeId}`);
+
+    // Kick off an initial shipment pull in the background (don't block the response)
+    syncShiprocketShipments(storeId).catch(err =>
+      console.warn(`[Shiprocket API] Initial sync failed for ${storeId}:`, err.message)
+    );
+
+    res.json({ status: 'connected', storeId });
+  } catch (err) {
+    console.error(`[Shiprocket API] ❌ Connect failed for ${storeId}:`, err.message);
+    res.status(401).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/shiprocket/sync/:storeId
+ * Pulls all Shiprocket shipments and upserts them into `shipments`.
+ */
+app.post('/api/shiprocket/sync/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  if (!storeId) return res.status(400).json({ error: 'storeId is required' });
+
+  try {
+    const result = await syncShiprocketShipments(storeId);
+    console.log(`[Shiprocket API] ✅ Sync complete for ${storeId}:`, result);
+    res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced });
+  } catch (err) {
+    console.error(`[Shiprocket API] ❌ Sync failed for ${storeId}:`, err.message);
+    res.status(500).json({ status: 'sync_failed', error: err.message });
+  }
+});
+
+/**
+ * GET /api/shiprocket/status/:storeId
+ * Returns connection state + a quick rollup of synced shipment statuses.
+ */
+app.get('/api/shiprocket/status/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  if (!storeId) return res.status(400).json({ error: 'storeId is required' });
+
+  try {
+    const { data: store } = await supabase
+      .from('stores')
+      .select('shiprocket_connected, shiprocket_email, shipments_synced_at')
+      .eq('id', storeId)
+      .single();
+
+    const { count } = await supabase
+      .from('shipments')
+      .select('id', { count: 'exact', head: true })
+      .eq('store_id', storeId);
+
+    res.json({
+      connected: !!store?.shiprocket_connected,
+      lastSyncedAt: store?.shipments_synced_at || null,
+      shipmentCount: count || 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/shiprocket/disconnect/:storeId
+ * Clears stored Shiprocket credentials. Synced `shipments` rows are kept.
+ */
+app.delete('/api/shiprocket/disconnect/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  if (!storeId) return res.status(400).json({ error: 'storeId is required' });
+
+  try {
+    const { error } = await supabase.from('stores').update({
+      shiprocket_email: null,
+      shiprocket_password: null,
+      shiprocket_token: null,
+      shiprocket_token_expires_at: null,
+      shiprocket_connected: false
+    }).eq('id', storeId);
+
+    if (error) throw new Error(error.message);
+    res.json({ status: 'disconnected', storeId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

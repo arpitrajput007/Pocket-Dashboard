@@ -3,8 +3,10 @@ import { supabase } from '../supabaseClient';
 import {
   LayoutDashboard, Calendar, CalendarDays, BarChart2,
   TrendingUp, Trophy, CheckCircle2, Save, RefreshCw,
-  AlertCircle, Sparkles, ChevronRight
+  AlertCircle, Sparkles, ChevronRight, Truck, X, Plug
 } from 'lucide-react';
+
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 /* ─────────────────────────────────────────────
    FEATURE DEFINITIONS
@@ -186,6 +188,80 @@ export default function AdvancedSettings({ store }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // ── Shiprocket integration state ──────────────────────────────
+  const [srStatus, setSrStatus] = useState({ connected: false, lastSyncedAt: null, shipmentCount: 0 });
+  const [srModalOpen, setSrModalOpen] = useState(false);
+  const [srEmail, setSrEmail] = useState('');
+  const [srPassword, setSrPassword] = useState('');
+  const [srBusy, setSrBusy] = useState(false);      // connecting
+  const [srSyncing, setSrSyncing] = useState(false);
+  const [srError, setSrError] = useState(null);
+
+  const loadShiprocketStatus = async () => {
+    if (!store?.id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/shiprocket/status/${store.id}`);
+      if (res.ok) setSrStatus(await res.json());
+    } catch { /* non-fatal — card just shows "not connected" */ }
+  };
+
+  useEffect(() => { loadShiprocketStatus(); }, [store?.id]);
+
+  const handleShiprocketConnect = async () => {
+    if (!srEmail.trim() || !srPassword.trim()) {
+      setSrError('Enter your Shiprocket API email and password.');
+      return;
+    }
+    setSrBusy(true);
+    setSrError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/shiprocket/connect/${store.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: srEmail.trim(), password: srPassword.trim() })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Connection failed (status ${res.status})`);
+      setSrModalOpen(false);
+      setSrEmail(''); setSrPassword('');
+      // Give the background initial sync a moment, then refresh status
+      setTimeout(loadShiprocketStatus, 2500);
+      setSrStatus(s => ({ ...s, connected: true }));
+    } catch (err) {
+      setSrError(err.message);
+    } finally {
+      setSrBusy(false);
+    }
+  };
+
+  const handleShiprocketSync = async () => {
+    setSrSyncing(true);
+    setSrError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/shiprocket/sync/${store.id}`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Sync failed (status ${res.status})`);
+      await loadShiprocketStatus();
+    } catch (err) {
+      setSrError(err.message);
+    } finally {
+      setSrSyncing(false);
+    }
+  };
+
+  const handleShiprocketDisconnect = async () => {
+    if (!window.confirm('Disconnect Shiprocket? Synced shipment history is kept, but status updates will stop.')) return;
+    setSrBusy(true);
+    try {
+      await fetch(`${API_URL}/api/shiprocket/disconnect/${store.id}`, { method: 'DELETE' });
+      setSrStatus({ connected: false, lastSyncedAt: null, shipmentCount: srStatus.shipmentCount });
+    } catch (err) {
+      setSrError(err.message);
+    } finally {
+      setSrBusy(false);
+    }
+  };
 
   // Load existing settings from Supabase on mount
   useEffect(() => {
@@ -491,6 +567,183 @@ export default function AdvancedSettings({ store }) {
               </span>
               <ChevronRight size={16} color="rgba(255,255,255,0.2)" />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Shipping Integration (Shiprocket) ─────────────────────── */}
+      {store?.shopify_domain && (
+        <div style={{
+          marginTop: '16px', padding: '20px', borderRadius: '16px',
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <div style={{
+            fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.3)',
+            textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '14px',
+          }}>
+            Shipping Integration
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+            {/* Logo tile */}
+            <div style={{
+              width: '44px', height: '44px', borderRadius: '12px', flexShrink: 0,
+              background: srStatus.connected ? 'rgba(124,58,237,0.15)' : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${srStatus.connected ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Truck size={22} color={srStatus.connected ? 'rgba(167,139,250,1)' : 'rgba(255,255,255,0.4)'} />
+            </div>
+
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                Shiprocket
+                {srStatus.connected && (
+                  <span style={{
+                    fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px',
+                    background: 'rgba(52,211,153,0.15)', color: 'rgba(52,211,153,1)',
+                    border: '1px solid rgba(52,211,153,0.3)',
+                  }}>● CONNECTED</span>
+                )}
+              </div>
+              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
+                {srStatus.connected
+                  ? `${srStatus.shipmentCount} shipments synced${srStatus.lastSyncedAt ? ' · ' + new Date(srStatus.lastSyncedAt).toLocaleString() : ''}`
+                  : 'Connect to fetch carrier-verified delivery status (source of truth).'}
+              </div>
+            </div>
+
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {srStatus.connected ? (
+                <>
+                  <button
+                    onClick={handleShiprocketSync}
+                    disabled={srSyncing}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '7px',
+                      padding: '9px 16px', borderRadius: '10px',
+                      background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.3)',
+                      color: 'rgba(167,139,250,1)', fontWeight: 600, fontSize: '13px',
+                      cursor: srSyncing ? 'default' : 'pointer', fontFamily: 'Outfit, sans-serif',
+                      opacity: srSyncing ? 0.6 : 1,
+                    }}
+                  >
+                    <RefreshCw size={14} style={srSyncing ? { animation: 'spin 0.8s linear infinite' } : undefined} />
+                    {srSyncing ? 'Syncing…' : 'Sync Now'}
+                  </button>
+                  <button
+                    onClick={handleShiprocketDisconnect}
+                    disabled={srBusy}
+                    style={{
+                      padding: '9px 16px', borderRadius: '10px',
+                      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                      color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px',
+                      cursor: 'pointer', fontFamily: 'Outfit, sans-serif',
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => { setSrError(null); setSrModalOpen(true); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '7px',
+                    padding: '9px 18px', borderRadius: '10px', border: 'none',
+                    background: 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))',
+                    color: '#fff', fontWeight: 600, fontSize: '13px',
+                    cursor: 'pointer', fontFamily: 'Outfit, sans-serif',
+                  }}
+                >
+                  <Plug size={14} /> Connect
+                </button>
+              )}
+            </div>
+          </div>
+
+          {srError && !srModalOpen && (
+            <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(248,113,113,1)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <AlertCircle size={14} /> {srError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Shiprocket Connect Modal ──────────────────────────────── */}
+      {srModalOpen && (
+        <div
+          onClick={e => e.target === e.currentTarget && setSrModalOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.6)',
+            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+          }}
+        >
+          <div style={{
+            width: '100%', maxWidth: '440px', borderRadius: '18px', padding: '26px',
+            background: '#15151f', border: '1px solid rgba(255,255,255,0.1)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '40px', height: '40px', borderRadius: '11px',
+                  background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.4)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Truck size={20} color="rgba(167,139,250,1)" />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: '#fff' }}>Connect Shiprocket</h3>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>Carrier-verified delivery status</div>
+                </div>
+              </div>
+              <button onClick={() => setSrModalOpen(false)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', borderRadius: '8px', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* How-to hint */}
+            <div style={{
+              fontSize: '12px', color: 'rgba(255,255,255,0.55)', lineHeight: 1.6, marginBottom: '18px',
+              padding: '12px 14px', borderRadius: '10px',
+              background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.15)',
+            }}>
+              In Shiprocket go to <strong style={{ color: 'rgba(255,255,255,0.8)' }}>Settings → API → Configure</strong> and create a dedicated <strong style={{ color: 'rgba(255,255,255,0.8)' }}>API User</strong>. Paste those credentials below — not your main login. They're encrypted and only used to read shipment status.
+            </div>
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.6)', marginBottom: '6px' }}>API User Email</label>
+            <input
+              type="email" value={srEmail} onChange={e => setSrEmail(e.target.value)}
+              placeholder="api-user@yourstore.com" autoComplete="off"
+              style={{ width: '100%', padding: '11px 14px', borderRadius: '10px', marginBottom: '14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '14px', boxSizing: 'border-box' }}
+            />
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.6)', marginBottom: '6px' }}>API User Password</label>
+            <input
+              type="password" value={srPassword} onChange={e => setSrPassword(e.target.value)}
+              placeholder="••••••••" autoComplete="off"
+              onKeyDown={e => e.key === 'Enter' && handleShiprocketConnect()}
+              style={{ width: '100%', padding: '11px 14px', borderRadius: '10px', marginBottom: '4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '14px', boxSizing: 'border-box' }}
+            />
+
+            {srError && (
+              <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(248,113,113,1)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <AlertCircle size={14} /> {srError}
+              </div>
+            )}
+
+            <button
+              onClick={handleShiprocketConnect}
+              disabled={srBusy}
+              style={{
+                width: '100%', marginTop: '18px', padding: '13px', borderRadius: '11px', border: 'none',
+                background: srBusy ? 'rgba(124,58,237,0.5)' : 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))',
+                color: '#fff', fontWeight: 700, fontSize: '14px', cursor: srBusy ? 'default' : 'pointer',
+                fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              }}
+            >
+              {srBusy ? <><RefreshCw size={15} style={{ animation: 'spin 0.8s linear infinite' }} /> Verifying…</> : <><Plug size={15} /> Connect & Sync</>}
+            </button>
           </div>
         </div>
       )}
