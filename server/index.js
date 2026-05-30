@@ -446,12 +446,15 @@ app.post('/api/sync/:storeId', async (req, res) => {
   const { storeId } = req.params;
   if (!storeId) return res.status(400).json({ error: 'storeId is required' });
 
-  // ?full=true forces a complete historical re-sync (ignores last_synced_at)
   const forceFullSync = req.query.full === 'true';
+  // Optional custom date range from dashboard Sync modal
+  const fromDate = req.body?.fromDate || null;   // YYYY-MM-DD
+  const toDate   = req.body?.toDate   || null;   // YYYY-MM-DD
 
-  console.log(`[Sync API] Triggered for store: ${storeId} full=${forceFullSync}`);
+  const dateStr = fromDate ? ` | range: ${fromDate} → ${toDate || 'today'}` : '';
+  console.log(`[Sync API] Triggered for store: ${storeId} full=${forceFullSync}${dateStr}`);
   try {
-    const result = await syncStoreData(storeId, { forceFullSync });
+    const result = await syncStoreData(storeId, { forceFullSync, fromDate, toDate });
     console.log(`[Sync API] ✅ Completed for ${storeId}:`, result);
     res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced, mode: result.mode });
   } catch (err) {

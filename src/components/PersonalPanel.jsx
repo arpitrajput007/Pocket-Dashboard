@@ -299,6 +299,10 @@ import ConnectShopifyStep from './ConnectShopifyStep';
 function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpired, onUpgradeClick, onStoreConnected, onDisconnect, onSyncComplete }) {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncFromDate, setSyncFromDate] = useState('');
+  const [syncToDate, setSyncToDate] = useState('');
+  const [syncPreset, setSyncPreset] = useState('incremental');
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [editDomain, setEditDomain] = useState(store?.shopify_domain || '');
@@ -327,17 +331,26 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
     ? new Date(store.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
     : '—';
 
-  const handleManualSync = async () => {
+  const handleManualSync = async ({ preset = 'incremental', fromDate = '', toDate = '' } = {}) => {
     if (!store?.id || syncing) return;
     setSyncing(true);
     setSyncMsg('');
+    setSyncModalOpen(false);
     try {
-      const res = await fetch(`/api/sync/${store.id}`, { method: 'POST' });
+      const isCustom = preset === 'custom' && fromDate;
+      const isFullResync = preset === 'full';
+      const body = isCustom ? { fromDate, toDate: toDate || new Date().toISOString().split('T')[0] } : {};
+      const url = isFullResync ? `/api/sync/${store.id}?full=true` : `/api/sync/${store.id}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: isCustom ? { 'Content-Type': 'application/json' } : {},
+        body: isCustom ? JSON.stringify(body) : undefined
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.status === 'sync_failed') {
         setSyncMsg(`❌ ${data.error || 'Sync failed — check Render logs'}`);
       } else {
-        setSyncMsg(`✅ Synced ${data.totalSynced ?? 0} orders!`);
+        setSyncMsg(`✅ Synced ${data.totalSynced ?? 0} orders (${data.mode})!`);
         if (onSyncComplete) onSyncComplete();
         setTimeout(() => setSyncMsg(''), 6000);
       }
@@ -518,7 +531,7 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
             </div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <button
-                onClick={handleManualSync}
+                onClick={() => { if (!syncing) { setSyncPreset('incremental'); setSyncFromDate(''); setSyncToDate(''); setSyncModalOpen(true); } }}
                 disabled={syncing}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, padding: '8px 16px', borderRadius: 999, background: 'rgba(255,255,255,0.05)', color: '#f1f5f9', border: '1px solid rgba(255,255,255,0.1)', cursor: syncing ? 'wait' : 'pointer', transition: 'all 0.2s', opacity: syncing ? 0.7 : 1, fontFamily: 'inherit' }}
                 onMouseEnter={e => { if (!syncing) e.currentTarget.style.background = 'rgba(255,255,255,0.09)'; }}
@@ -1022,12 +1035,94 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
       
       {/* Global Modals/Overlays */}
       <Suspense fallback={null}>
-        <CopilotChat 
-          store={store} 
-          isOpen={copilotOpen} 
-          onClose={() => setCopilotOpen(false)} 
+        <CopilotChat
+          store={store}
+          isOpen={copilotOpen}
+          onClose={() => setCopilotOpen(false)}
         />
       </Suspense>
+
+      {/* ── Sync Data Modal ─────────────────────────────────────────── */}
+      {syncModalOpen && (
+        <div
+          onClick={e => e.target === e.currentTarget && setSyncModalOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+        >
+          <div style={{ width: '100%', maxWidth: 420, background: '#13131f', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: 26, boxShadow: '0 24px 60px rgba(0,0,0,0.5)' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#fff' }}>Sync Shopify Data</h3>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 3 }}>Choose what to pull from Shopify</div>
+              </div>
+              <button onClick={() => setSyncModalOpen(false)} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>×</button>
+            </div>
+
+            {/* Preset options */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              {[
+                { key: 'incremental', icon: '⚡', label: 'Quick Sync', sub: 'Only new & updated orders since last sync — fastest' },
+                { key: 'full',        icon: '🔄', label: 'Full Re-sync', sub: `All orders from ${store?.dashboard_features?.sync_from_date || 'store start'} to today` },
+                { key: 'custom',      icon: '📅', label: 'Custom Date Range', sub: 'Pick exact from & to dates' },
+              ].map(p => {
+                const active = syncPreset === p.key;
+                return (
+                  <button
+                    key={p.key}
+                    onClick={() => setSyncPreset(p.key)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderRadius: 12, cursor: 'pointer', textAlign: 'left', background: active ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.03)', border: `1px solid ${active ? 'rgba(99,102,241,0.4)' : 'rgba(255,255,255,0.07)'}`, transition: 'all 0.15s' }}
+                  >
+                    <span style={{ fontSize: 22, flexShrink: 0 }}>{p.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: active ? '#a5b4fc' : '#e2e8f0' }}>{p.label}</div>
+                      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>{p.sub}</div>
+                    </div>
+                    {active && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#818cf8', flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom date pickers */}
+            {syncPreset === 'custom' && (
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>From Date</label>
+                    <input
+                      type="date" value={syncFromDate} onChange={e => setSyncFromDate(e.target.value)}
+                      max={syncToDate || new Date().toISOString().split('T')[0]}
+                      style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: 13, boxSizing: 'border-box', colorScheme: 'dark' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>To Date</label>
+                    <input
+                      type="date" value={syncToDate} onChange={e => setSyncToDate(e.target.value)}
+                      min={syncFromDate} max={new Date().toISOString().split('T')[0]}
+                      style={{ width: '100%', padding: '9px 12px', borderRadius: 8, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: 13, boxSizing: 'border-box', colorScheme: 'dark' }}
+                    />
+                  </div>
+                </div>
+                {syncFromDate && (
+                  <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(52,211,153,0.9)', fontWeight: 500 }}>
+                    ✓ Syncing {syncFromDate} → {syncToDate || 'today'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Confirm button */}
+            <button
+              onClick={() => handleManualSync({ preset: syncPreset, fromDate: syncFromDate, toDate: syncToDate })}
+              disabled={syncPreset === 'custom' && !syncFromDate}
+              style={{ width: '100%', padding: '13px', borderRadius: 11, border: 'none', background: (syncPreset === 'custom' && !syncFromDate) ? 'rgba(255,255,255,0.06)' : 'linear-gradient(135deg, #6366f1, #4f46e5)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: (syncPreset === 'custom' && !syncFromDate) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            >
+              <RefreshCw size={15} /> Start Sync
+            </button>
+          </div>
+        </div>
+      )}
 
     </>
   );
