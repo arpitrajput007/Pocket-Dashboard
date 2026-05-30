@@ -194,6 +194,8 @@ export default function AdvancedSettings({ store }) {
   const [srModalOpen, setSrModalOpen] = useState(false);
   const [srEmail, setSrEmail] = useState('');
   const [srPassword, setSrPassword] = useState('');
+  const [srFromDate, setSrFromDate] = useState('');   // YYYY-MM-DD
+  const [srFromPreset, setSrFromPreset] = useState('store_start'); // preset key
   const [srBusy, setSrBusy] = useState(false);      // connecting
   const [srSyncing, setSrSyncing] = useState(false);
   const [srError, setSrError] = useState(null);
@@ -213,18 +215,37 @@ export default function AdvancedSettings({ store }) {
       setSrError('Enter your Shiprocket API email and password.');
       return;
     }
+    if (srFromPreset === 'custom' && !srFromDate) {
+      setSrError('Pick a start date or choose a preset.');
+      return;
+    }
     setSrBusy(true);
     setSrError(null);
+    // Resolve the final syncFromDate from the chosen preset
+    const today = new Date();
+    const daysAgoStr = (n) => {
+      const d = new Date(today); d.setDate(d.getDate() - n);
+      return d.toISOString().substring(0, 10);
+    };
+    const storeStartDate = store?.dashboard_features?.sync_from_date || null;
+    const syncFromDate =
+      srFromPreset === 'custom'       ? srFromDate :
+      srFromPreset === 'store_start'  ? storeStartDate :
+      srFromPreset === '30d'          ? daysAgoStr(30) :
+      srFromPreset === '90d'          ? daysAgoStr(90) :
+      srFromPreset === '180d'         ? daysAgoStr(180) :
+      null; // 'all' = no filter
+
     try {
       const res = await fetch(`${API_URL}/api/shiprocket/connect/${store.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: srEmail.trim(), password: srPassword.trim() })
+        body: JSON.stringify({ email: srEmail.trim(), password: srPassword.trim(), syncFromDate })
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Connection failed (status ${res.status})`);
       setSrModalOpen(false);
-      setSrEmail(''); setSrPassword('');
+      setSrEmail(''); setSrPassword(''); setSrFromDate(''); setSrFromPreset('store_start');
       // Give the background initial sync a moment, then refresh status
       setTimeout(loadShiprocketStatus, 2500);
       setSrStatus(s => ({ ...s, connected: true }));
@@ -615,7 +636,7 @@ export default function AdvancedSettings({ store }) {
                   <button onClick={handleShiprocketDisconnect} disabled={srBusy} style={{ padding: '9px 16px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>Disconnect</button>
                 </>
               ) : (
-                <button onClick={() => { setSrError(null); setSrModalOpen(true); }} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 18px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))', color: '#fff', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>
+                <button onClick={() => { setSrError(null); setSrFromPreset(store?.dashboard_features?.sync_from_date ? 'store_start' : '90d'); setSrModalOpen(true); }} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 18px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))', color: '#fff', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>
                   <Plug size={14} /> Connect
                 </button>
               )}
@@ -682,9 +703,57 @@ export default function AdvancedSettings({ store }) {
             <input
               type="password" value={srPassword} onChange={e => setSrPassword(e.target.value)}
               placeholder="••••••••" autoComplete="off"
-              onKeyDown={e => e.key === 'Enter' && handleShiprocketConnect()}
-              style={{ width: '100%', padding: '11px 14px', borderRadius: '10px', marginBottom: '4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '14px', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '11px 14px', borderRadius: '10px', marginBottom: '20px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontSize: '14px', boxSizing: 'border-box' }}
             />
+
+            {/* ── Historical data range ──────────────────────────────── */}
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '18px', marginBottom: '4px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.6)', marginBottom: '10px' }}>
+                How far back should we fetch shipment history?
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                {[
+                  { key: 'store_start', label: '📅 Store start date', sub: store?.dashboard_features?.sync_from_date || 'match Shopify', show: !!store?.dashboard_features?.sync_from_date },
+                  { key: '30d',  label: 'Last 30 days',   sub: 'lighter import' },
+                  { key: '90d',  label: 'Last 3 months',  sub: 'recommended' },
+                  { key: '180d', label: 'Last 6 months',  sub: '' },
+                  { key: 'all',  label: 'All time',       sub: 'full history' },
+                  { key: 'custom', label: 'Custom date',  sub: 'pick exact date' },
+                ].filter(p => p.show !== false).map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => setSrFromPreset(p.key)}
+                    style={{
+                      padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', textAlign: 'left',
+                      background: srFromPreset === p.key ? 'rgba(124,58,237,0.2)' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${srFromPreset === p.key ? 'rgba(124,58,237,0.6)' : 'rgba(255,255,255,0.08)'}`,
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: srFromPreset === p.key ? '#c4b5fd' : '#fff' }}>{p.label}</div>
+                    {p.sub && <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>{p.sub}</div>}
+                  </button>
+                ))}
+              </div>
+
+              {srFromPreset === 'custom' && (
+                <input
+                  type="date" value={srFromDate} onChange={e => setSrFromDate(e.target.value)}
+                  max={new Date().toISOString().substring(0,10)}
+                  style={{ width: '100%', padding: '11px 14px', borderRadius: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(124,58,237,0.4)', color: '#fff', fontSize: '14px', boxSizing: 'border-box', colorScheme: 'dark' }}
+                />
+              )}
+
+              {/* Summary line */}
+              <div style={{ marginTop: '10px', fontSize: '12px', color: 'rgba(255,255,255,0.4)' }}>
+                {srFromPreset === 'all'         && '⚠️ Fetching all history may take a few minutes for large stores.'}
+                {srFromPreset === 'store_start' && `✅ Will fetch from ${store?.dashboard_features?.sync_from_date} — matches your Shopify data window.`}
+                {srFromPreset === '30d'         && '✅ Fast import, covers the last 30 days.'}
+                {srFromPreset === '90d'         && '✅ Good balance of speed and coverage.'}
+                {srFromPreset === '180d'        && '✅ 6 months of shipment history.'}
+                {srFromPreset === 'custom' && srFromDate && `✅ Fetching from ${srFromDate} onwards.`}
+              </div>
+            </div>
 
             {srError && (
               <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(248,113,113,1)', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -702,7 +771,7 @@ export default function AdvancedSettings({ store }) {
                 fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
               }}
             >
-              {srBusy ? <><RefreshCw size={15} style={{ animation: 'spin 0.8s linear infinite' }} /> Verifying…</> : <><Plug size={15} /> Connect & Sync</>}
+              {srBusy ? <><RefreshCw size={15} style={{ animation: 'spin 0.8s linear infinite' }} /> Verifying & syncing…</> : <><Plug size={15} /> Connect & Sync</>}
             </button>
           </div>
         </div>

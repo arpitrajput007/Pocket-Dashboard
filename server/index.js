@@ -913,16 +913,20 @@ Rules:
  */
 app.post('/api/shiprocket/connect/:storeId', async (req, res) => {
   const { storeId } = req.params;
-  const { email, password } = req.body || {};
+  const { email, password, syncFromDate } = req.body || {};
   if (!storeId) return res.status(400).json({ error: 'storeId is required' });
   if (!email || !password) return res.status(400).json({ error: 'Shiprocket email and password are required' });
 
-  try {
-    await connectShiprocket(storeId, email, password);
-    console.log(`[Shiprocket API] ✅ Connected store ${storeId}`);
+  // Validate syncFromDate format (YYYY-MM-DD) if provided
+  const cleanFromDate = syncFromDate && /^\d{4}-\d{2}-\d{2}$/.test(syncFromDate.trim())
+    ? syncFromDate.trim() : null;
 
-    // Kick off an initial shipment pull in the background (don't block the response)
-    syncShiprocketShipments(storeId).catch(err =>
+  try {
+    await connectShiprocket(storeId, email, password, cleanFromDate);
+    console.log(`[Shiprocket API] ✅ Connected store ${storeId} (from: ${cleanFromDate || 'all time'})`);
+
+    // Kick off an initial shipment pull in the background using the chosen from-date
+    syncShiprocketShipments(storeId, { fromDateOverride: cleanFromDate }).catch(err =>
       console.warn(`[Shiprocket API] Initial sync failed for ${storeId}:`, err.message)
     );
 

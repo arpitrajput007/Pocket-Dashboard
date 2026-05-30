@@ -80,8 +80,10 @@ async function getValidToken(store) {
 /**
  * Validate + connect a store's Shiprocket account.
  * Logs in once to confirm the credentials work, then stores them encrypted.
+ * @param {string} syncFromDate  YYYY-MM-DD — how far back the initial pull goes.
+ *   If null, fetches all available history.
  */
-async function connectShiprocket(storeId, email, password) {
+async function connectShiprocket(storeId, email, password, syncFromDate = null) {
   const cleanEmail = (email || '').trim();
   const cleanPassword = (password || '').trim();
   if (!cleanEmail || !cleanPassword) throw new Error('Shiprocket email and password are required');
@@ -89,29 +91,33 @@ async function connectShiprocket(storeId, email, password) {
   // Verify credentials before persisting anything
   const token = await shiprocketLogin(cleanEmail, cleanPassword);
 
-  const { error } = await supabase.from('stores').update({
+  const updatePayload = {
     shiprocket_email: encrypt(cleanEmail),
     shiprocket_password: encrypt(cleanPassword),
     shiprocket_token: encrypt(token),
     shiprocket_token_expires_at: new Date(Date.now() + TOKEN_TTL_MS).toISOString(),
     shiprocket_connected: true
-  }).eq('id', storeId);
+  };
+  if (syncFromDate) updatePayload.shiprocket_sync_from_date = syncFromDate;
 
+  const { error } = await supabase.from('stores').update(updatePayload).eq('id', storeId);
   if (error) throw new Error(`Failed to save Shiprocket connection: ${error.message}`);
   return { connected: true };
 }
 
 /**
- * Pull all Shiprocket orders/shipments for a store and upsert them into `shipments`.
+ * Pull Shiprocket orders/shipments for a store and upsert them into `shipments`.
+ * Respects shiprocket_sync_from_date — only fetches orders on or after that date.
+ * Stops paginating early once all orders on a page predate the cutoff.
  * @param {string} storeId
- * @param {object} opts  { maxPages } safety cap (default 200 pages × 100 = 20k orders)
+ * @param {object} opts  { maxPages, fromDateOverride }
  */
-async function syncShiprocketShipments(storeId, { maxPages = 200 } = {}) {
+async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverride = null } = {}) {
   console.log(`[Shiprocket] ▶ Starting shipment sync for store: ${storeId}`);
 
   const { data: store, error } = await supabase
     .from('stores')
-    .select('id, shiprocket_email, shiprocket_password, shiprocket_token, shiprocket_token_expires_at, shiprocket_connected')
+    .select('id, shiprocket_email, shiprocket_password, shiprocket_token, shiprocket_token_expires_at, shiprocket_connected, shiprocket_sync_from_date')
     .eq('id', storeId)
     .single();
 
@@ -120,6 +126,10 @@ async function syncShiprocketShipments(storeId, { maxPages = 200 } = {}) {
     throw new Error('Shiprocket is not connected for this store');
   }
 
+  // Resolve the date cutoff: override > stored value > null (fetch all)
+  const fromDate = fromDateOverride || store.shiprocket_sync_from_date || null;
+  if (fromDate) console.log(`[Shiprocket] Fetching orders from ${fromDate} onwards`);
+
   let token = await getValidToken(store);
 
   let page = 1;
@@ -127,7 +137,9 @@ async function syncShiprocketShipments(storeId, { maxPages = 200 } = {}) {
   let totalPages = 1;
 
   while (page <= totalPages && page <= maxPages) {
-    const url = `${SR_BASE}/orders?per_page=100&page=${page}`;
+    // Shiprocket supports from_date / to_date filters on the orders list
+    let url = `${SR_BASE}/orders?per_page=100&page=${page}&sort=DESC&sort_by=created_at`;
+    if (fromDate) url += `&from_date=${fromDate}`;
     let res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 
     // Token might have expired mid-run — refresh once and retry this page
@@ -147,7 +159,27 @@ async function syncShiprocketShipments(storeId, { maxPages = 200 } = {}) {
 
     if (orders.length === 0) break;
 
-    const rows = orders.map(o => {
+    // Client-side early stop: Shiprocket returns newest-first, so once we hit
+    // an order older than fromDate the rest of the pages will also be older.
+    if (fromDate) {
+      const allOlderThanCutoff = orders.every(o => {
+        const orderDate = (o.created_at || '').substring(0, 10);
+        return orderDate && orderDate < fromDate;
+      });
+      if (allOlderThanCutoff) {
+        console.log(`[Shiprocket] All orders on page ${page} predate ${fromDate} — stopping early`);
+        break;
+      }
+    }
+
+    // Filter out orders older than fromDate before upserting
+    const filteredOrders = fromDate
+      ? orders.filter(o => !o.created_at || (o.created_at || '').substring(0, 10) >= fromDate)
+      : orders;
+
+    if (filteredOrders.length === 0) { page++; continue; }
+
+    const rows = filteredOrders.map(o => {
       // shipments can be an array, a single object, or absent depending on order state
       let firstShipment = null;
       if (Array.isArray(o.shipments) && o.shipments.length > 0) firstShipment = o.shipments[0];
