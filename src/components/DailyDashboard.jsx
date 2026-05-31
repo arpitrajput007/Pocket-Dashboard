@@ -251,8 +251,58 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     return { totNet, avgCpp: totItems > 0 ? totAd / totItems : 0, profDays, profAmt, lossDays, lossAmt, dayData, maxProfit, maxLoss };
   }, [orders, adCosts, scoreStart, scoreEnd, productPricing]);
 
+  // ── Smart cost detection ──────────────────────────────────────────────────
+  // Scans loaded orders for products that have NO cost price set in the Pricing
+  // section. These silently fall back to the default ₹555 and distort PNL, so we
+  // surface them in a persistent banner until the owner sets a real cost.
+  const missingCostItems = useMemo(() => {
+    const seen = new Map(); // key -> { title, sku, units }
+    orders.forEach(o => {
+      const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
+      lineItems.forEach(li => {
+        const sku = li.sku || '';
+        const title = li.title || 'Unknown';
+        // Resolve cost the same way calcPL does: SKU first, then TITLE fallback
+        const entry = (sku && productPricing[sku]) || productPricing['TITLE:' + title];
+        // Missing = no pricing row at all, OR a row whose cost price is 0/unset
+        const missing = !entry || !entry.cp || entry.cp <= 0;
+        if (missing) {
+          const k = title + '||' + sku;
+          if (!seen.has(k)) seen.set(k, { title, sku, units: 0, hasRow: !!entry });
+          seen.get(k).units += parseInt(li.quantity || 1);
+        }
+      });
+    });
+    return [...seen.values()].sort((a, b) => b.units - a.units);
+  }, [orders, productPricing]);
+
   return (
     <div className="view-content active" style={{ paddingBottom: 60 }}>
+      {/* ── Missing-cost warning banner ──────────────────────────────── */}
+      {missingCostItems.length > 0 && (
+        <div style={{ marginBottom: 20, padding: '16px 20px', background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 20 }}>⚠️</span>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#fbbf24' }}>
+              {missingCostItems.length} product{missingCostItems.length !== 1 ? 's' : ''} missing a cost price
+            </div>
+          </div>
+          <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
+            These products are using the default ₹555 cost, which makes your profit numbers inaccurate. Set their real cost in the <strong style={{ color: 'rgba(255,255,255,0.8)' }}>Pricing</strong> section to fix your PNL.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {missingCostItems.slice(0, 12).map((it, i) => (
+              <span key={i} title={it.sku ? `SKU: ${it.sku}` : 'No SKU'} style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(251,191,36,0.1)', color: 'rgba(251,191,36,0.95)', border: '1px solid rgba(251,191,36,0.25)' }}>
+                {it.title}{it.units > 0 ? ` · ${it.units}u` : ''}
+              </span>
+            ))}
+            {missingCostItems.length > 12 && (
+              <span style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 10px', color: 'rgba(255,255,255,0.4)' }}>+{missingCostItems.length - 12} more</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* SCOREBOARD */}
       <div className="controls-bar glass" style={{ marginBottom: 24 }}>
         <div style={{ flex: 1 }}><h2 style={{ margin: 0, fontSize: 18 }}>Profit/Loss Scoreboard</h2></div>
@@ -533,7 +583,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
 
       {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} adProductBreakdown={adProductBreakdowns[modalState.date]} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} initialProductBreakdown={adProductBreakdowns[modalState.date]} enabledPlatforms={enabledAdPlatforms} allProducts={allProducts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
-      {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} tCounts={modalState.tCounts} pCounts={modalState.pCounts} itemsCount={modalState.itemsCount} cpp={modalState.cpp} totalOrders={modalState.totalOrders} revBreakdown={modalState.revBreakdown} grossSales={modalState.grossSales} allItems={modalState.allItems} productPricing={modalState.productPricing} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} tCounts={modalState.tCounts} pCounts={modalState.pCounts} itemsCount={modalState.itemsCount} cpp={modalState.cpp} totalOrders={modalState.totalOrders} revBreakdown={modalState.revBreakdown} grossSales={modalState.grossSales} allItems={modalState.allItems} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} mode={modalState.mode || 'ordered'} onClose={() => setModalState({ type: null })} />}
     </div>
   );

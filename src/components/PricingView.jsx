@@ -542,55 +542,61 @@ export default function PricingView({ store }) {
           <MarginBadge cp={p.cost_price} shipping={p.shipping_cost} sp={p.selling_price}/>
         </td>
         {/* Actions */}
-        <td style={{ padding:'8px 14px', textAlign:'center' }}>
-          <div style={{ display:'flex', gap:'6px', justifyContent:'center', flexWrap:'wrap' }}>
-            <button onClick={()=>saveSingle(p)} disabled={!p._dirty || hiddenFlag || savingId===p.id} style={{
-              padding:'5px 10px', borderRadius:'7px', fontSize:'11px', fontWeight:700,
-              background: p._dirty && !hiddenFlag ? 'linear-gradient(135deg,rgba(167,139,250,1),rgba(56,189,248,1))' : 'rgba(255,255,255,0.06)',
-              border:'none', color: p._dirty && !hiddenFlag ? '#000' : 'rgba(255,255,255,0.2)',
-              cursor: p._dirty && !hiddenFlag ? 'pointer' : 'not-allowed',
-            }}>
-              {savingId===p.id ? '...' : 'Save'}
-            </button>
-            <button onClick={()=>toggleHistory(p.id)} title="Cost history" style={{
-              padding:'5px 8px', borderRadius:'7px', fontSize:'11px', fontWeight:600,
-              background: histExpanded ? 'rgba(251,191,36,0.14)' : 'rgba(255,255,255,0.05)',
-              border: histExpanded ? '1px solid rgba(251,191,36,0.3)' : '1px solid rgba(255,255,255,0.08)',
-              color: histExpanded ? 'rgba(251,191,36,0.95)' : 'rgba(255,255,255,0.45)', cursor:'pointer',
-            }}>
-              <History size={11}/>
-            </button>
-            {isPack ? (
-              <button onClick={()=>deletePack(p)} title="Delete pack" style={{
-                padding:'5px 8px', borderRadius:'7px', fontSize:'11px', fontWeight:600,
-                background:'rgba(251,113,133,0.08)', border:'1px solid rgba(251,113,133,0.2)',
-                color:'rgba(251,113,133,0.85)', cursor:'pointer',
-              }}>
-                <Trash2 size={11}/>
-              </button>
-            ) : (
-              <>
-                <button onClick={()=>openPackModal(p)} title="Add pack" disabled={hiddenFlag} style={{
-                  padding:'5px 8px', borderRadius:'7px', fontSize:'11px', fontWeight:600,
-                  background:'rgba(56,189,248,0.08)', border:'1px solid rgba(56,189,248,0.2)',
-                  color:'rgba(56,189,248,0.85)', cursor: hiddenFlag ? 'not-allowed' : 'pointer',
-                  opacity: hiddenFlag ? 0.4 : 1,
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
+        <td style={{ padding:'8px 14px' }}>
+          {(() => {
+            const iconBtn = { width: 30, height: 30, flexShrink: 0, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.15s' };
+            return (
+              <div style={{ display:'flex', gap:'6px', justifyContent:'flex-end', alignItems:'center', flexWrap:'nowrap' }}>
+                {/* Save — labeled, primary */}
+                <button onClick={()=>saveSingle(p)} disabled={!p._dirty || hiddenFlag || savingId===p.id} title="Save changes" style={{
+                  height: 30, padding:'0 14px', borderRadius:'8px', fontSize:'12px', fontWeight:700, flexShrink: 0,
+                  background: p._dirty && !hiddenFlag ? 'linear-gradient(135deg,rgba(167,139,250,1),rgba(56,189,248,1))' : 'rgba(255,255,255,0.06)',
+                  border:'none', color: p._dirty && !hiddenFlag ? '#000' : 'rgba(255,255,255,0.25)',
+                  cursor: p._dirty && !hiddenFlag ? 'pointer' : 'not-allowed', transition: 'all 0.15s',
                 }}>
-                  <Layers size={11}/> Pack
+                  {savingId===p.id ? '…' : 'Save'}
                 </button>
-                <button onClick={()=>toggleLocalHide(p.id)} title={localHidden[p.id] ? 'Unhide' : 'Hide'} style={{
-                  padding:'5px 8px', borderRadius:'7px', fontSize:'11px', fontWeight:600,
-                  background: localHidden[p.id] ? 'rgba(56,189,248,0.1)' : 'rgba(255,255,255,0.05)',
-                  border: localHidden[p.id] ? '1px solid rgba(56,189,248,0.25)' : '1px solid rgba(255,255,255,0.08)',
-                  color: localHidden[p.id] ? 'rgba(56,189,248,0.8)' : 'rgba(255,255,255,0.4)',
-                  cursor:'pointer',
+
+                {/* History */}
+                <button onClick={()=>toggleHistory(p.id)} title="Cost history" style={{
+                  ...iconBtn,
+                  background: histExpanded ? 'rgba(251,191,36,0.14)' : 'rgba(255,255,255,0.05)',
+                  border: histExpanded ? '1px solid rgba(251,191,36,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                  color: histExpanded ? 'rgba(251,191,36,0.95)' : 'rgba(255,255,255,0.45)',
                 }}>
-                  {localHidden[p.id] ? <Eye size={11}/> : <EyeOff size={11}/>}
+                  <History size={13}/>
                 </button>
-              </>
-            )}
-          </div>
+
+                {isPack ? (
+                  <button onClick={()=>deletePack(p)} title="Delete this pack" style={{
+                    ...iconBtn, background:'rgba(251,113,133,0.08)', border:'1px solid rgba(251,113,133,0.2)', color:'rgba(251,113,133,0.85)',
+                  }}>
+                    <Trash2 size={13}/>
+                  </button>
+                ) : (
+                  <>
+                    {/* Add pack — labeled so it's discoverable; always available for any size */}
+                    <button onClick={()=>openPackModal(p)} title="Create a pack (any size)" disabled={hiddenFlag} style={{
+                      height: 30, padding:'0 12px', borderRadius:'8px', fontSize:'12px', fontWeight:600, flexShrink: 0,
+                      background:'rgba(56,189,248,0.1)', border:'1px solid rgba(56,189,248,0.25)',
+                      color:'rgba(56,189,248,0.95)', cursor: hiddenFlag ? 'not-allowed' : 'pointer',
+                      opacity: hiddenFlag ? 0.4 : 1, display: 'inline-flex', alignItems: 'center', gap: 5, transition: 'all 0.15s',
+                    }}>
+                      <Layers size={13}/> Pack
+                    </button>
+                    <button onClick={()=>toggleLocalHide(p.id)} title={localHidden[p.id] ? 'Unhide product' : 'Hide product'} style={{
+                      ...iconBtn,
+                      background: localHidden[p.id] ? 'rgba(56,189,248,0.1)' : 'rgba(255,255,255,0.05)',
+                      border: localHidden[p.id] ? '1px solid rgba(56,189,248,0.25)' : '1px solid rgba(255,255,255,0.08)',
+                      color: localHidden[p.id] ? 'rgba(56,189,248,0.8)' : 'rgba(255,255,255,0.4)',
+                    }}>
+                      {localHidden[p.id] ? <Eye size={13}/> : <EyeOff size={13}/>}
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </td>
       </tr>
       {histExpanded && (
