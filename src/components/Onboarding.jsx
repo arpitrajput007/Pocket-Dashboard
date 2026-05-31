@@ -79,10 +79,9 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
   const [accessToken, setAccessToken] = useState('');
   const [themeColor, setThemeColor]   = useState('#6366f1');
   const [showToken, setShowToken]     = useState(false);
-  const [syncFromType, setSyncFromType] = useState('90d');
-  const [syncFromDate, setSyncFromDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().split('T')[0];
-  });
+  const [syncFromType, setSyncFromType] = useState('all');
+  const [syncFromDate, setSyncFromDate] = useState('2000-01-01');
+  const [syncToDate, setSyncToDate]     = useState('');
   const [loading, setLoading]         = useState(false);
   const [connectError, setConnectError] = useState('');
   const [connectStatus, setConnectStatus] = useState('');
@@ -100,7 +99,7 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
       const apiUrl = import.meta.env.VITE_API_URL || '';
       const res = await fetch(`${apiUrl}/api/store`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ owner_id: session.user.id, store_name: storeName, shopify_domain: shopifyDomain, shopify_client_id: clientId, shopify_access_token: accessToken, primary_color: themeColor, dashboard_style: 'dark-modern', sync_from_date: syncFromDate }),
+        body: JSON.stringify({ owner_id: session.user.id, store_name: storeName, shopify_domain: shopifyDomain, shopify_client_id: clientId, shopify_access_token: accessToken, primary_color: themeColor, dashboard_style: 'dark-modern', sync_from_date: syncFromDate, sync_to_date: syncToDate || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to connect store');
@@ -130,7 +129,7 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
         const apiUrl = import.meta.env.VITE_API_URL || '';
         const res = await fetch(`${apiUrl}/api/store`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ owner_id: session.user.id, store_name: storeName, shopify_domain: shopifyDomain, shopify_client_id: clientId, shopify_access_token: accessToken, primary_color: themeColor, dashboard_style: 'dark-modern', sync_from_date: syncFromDate }),
+          body: JSON.stringify({ owner_id: session.user.id, store_name: storeName, shopify_domain: shopifyDomain, shopify_client_id: clientId, shopify_access_token: accessToken, primary_color: themeColor, dashboard_style: 'dark-modern', sync_from_date: syncFromDate, sync_to_date: syncToDate || null }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to connect store');
@@ -165,6 +164,7 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
           showToken={showToken} setShowToken={setShowToken}
           syncFromType={syncFromType} setSyncFromType={setSyncFromType}
           syncFromDate={syncFromDate} setSyncFromDate={setSyncFromDate}
+          syncToDate={syncToDate} setSyncToDate={setSyncToDate}
           loading={loading} connectStatus={connectStatus}
           onBack={() => {}} onContinue={handleEmbeddedSubmit}
         />
@@ -352,6 +352,7 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
                 showToken={showToken}         setShowToken={setShowToken}
                 syncFromType={syncFromType}   setSyncFromType={setSyncFromType}
                 syncFromDate={syncFromDate}   setSyncFromDate={setSyncFromDate}
+                syncToDate={syncToDate}   setSyncToDate={setSyncToDate}
                 onBack={prevStep}             onContinue={nextStep}
               />
             )}

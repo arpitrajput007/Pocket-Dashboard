@@ -248,10 +248,13 @@ function TokenGuideButton() {
   );
 }
 
-export default function ConnectShopifyStep({ storeName = '', setStoreName, shopifyDomain, setShopifyDomain, clientId = '', setClientId, accessToken = '', setAccessToken, showToken, setShowToken, syncFromType, setSyncFromType, syncFromDate, setSyncFromDate, onBack, onContinue, loading = false, connectStatus = '' }) {
+export default function ConnectShopifyStep({ storeName = '', setStoreName, shopifyDomain, setShopifyDomain, clientId = '', setClientId, accessToken = '', setAccessToken, showToken, setShowToken, syncFromType, setSyncFromType, syncFromDate, setSyncFromDate, syncToDate = '', setSyncToDate, onBack, onContinue, loading = false, connectStatus = '' }) {
   const [openFaq, setOpenFaq] = useState(null);
   const [connecting, setConnecting] = useState(false);
-  const canContinue = shopifyDomain.trim() && accessToken.trim() && (!setStoreName || storeName.trim());
+  const todayStr = new Date().toISOString().split('T')[0];
+  // Custom range is valid only when a "from" date is chosen (to date defaults to today)
+  const rangeValid = syncFromType === 'all' || (syncFromType === 'custom' && !!syncFromDate && syncFromDate !== '2000-01-01');
+  const canContinue = shopifyDomain.trim() && accessToken.trim() && (!setStoreName || storeName.trim()) && rangeValid;
 
   const handleContinue = () => {
     if (!canContinue) return;
@@ -385,94 +388,87 @@ export default function ConnectShopifyStep({ storeName = '', setStoreName, shopi
 
         {/* ── Data Range ─────────────────────────────────────────────── */}
         <div style={{ marginBottom: 32, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 28 }}>
-          <label style={labelSt}>Data Range to Import</label>
+          <label style={labelSt}>How much history should we fetch?</label>
           <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 18px', lineHeight: 1.65 }}>
-            Choose how far back to pull your Shopify orders. Pick your store launch date or a preset — we'll always keep syncing <strong style={{ color: '#e2e8f0' }}>up to today</strong> automatically.
+            Choose how far back to import your Shopify orders. This is a one-time choice — you can re-sync any range later from Settings.
           </p>
 
-          {/* From → To visual */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, padding: '14px 18px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>From</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#a5b4fc' }}>
-                {syncFromType === 'all' ? 'All time' :
-                 syncFromDate ? new Date(syncFromDate + 'T12:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) :
-                 'Select a date'}
-              </div>
-            </div>
-            <div style={{ color: '#475569', fontSize: 18 }}>→</div>
-            <div style={{ flex: 1, textAlign: 'right' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>To</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#34d399' }}>Today (live)</div>
-            </div>
+          {/* Two big choices */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            <button
+              type="button"
+              onClick={() => { setSyncFromType('all'); setSyncFromDate('2000-01-01'); if (setSyncToDate) setSyncToDate(''); }}
+              style={{
+                padding: '18px 16px', borderRadius: 14, cursor: 'pointer', textAlign: 'left',
+                background: syncFromType === 'all' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${syncFromType === 'all' ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                transition: 'all 0.15s',
+              }}
+            >
+              <div style={{ fontSize: 22, marginBottom: 8 }}>🌍</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: syncFromType === 'all' ? '#a5b4fc' : '#e2e8f0' }}>All Time</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.5 }}>Every order since your store began.</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setSyncFromType('custom'); if (syncFromDate === '2000-01-01') setSyncFromDate(''); }}
+              style={{
+                padding: '18px 16px', borderRadius: 14, cursor: 'pointer', textAlign: 'left',
+                background: syncFromType === 'custom' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${syncFromType === 'custom' ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                transition: 'all 0.15s',
+              }}
+            >
+              <div style={{ fontSize: 22, marginBottom: 8 }}>📅</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: syncFromType === 'custom' ? '#a5b4fc' : '#e2e8f0' }}>Custom Range</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3, lineHeight: 1.5 }}>Pick an exact from &amp; to date.</div>
+            </button>
           </div>
 
-          {/* Preset grid */}
-          {(() => {
-            const today = new Date();
-            const dAgo = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d.toISOString().split('T')[0]; };
-            const presets = [
-              { key: '30d',   label: 'Last 30 days',     date: dAgo(30),   sub: 'recent only' },
-              { key: '90d',   label: 'Last 3 months',    date: dAgo(90),   sub: 'recommended' },
-              { key: '180d',  label: 'Last 6 months',    date: dAgo(180),  sub: 'good coverage' },
-              { key: '365d',  label: 'Last 1 year',      date: dAgo(365),  sub: '' },
-              { key: 'all',   label: 'All time',         date: '2000-01-01', sub: 'full history' },
-              { key: 'custom',label: 'Store launch date', date: null,       sub: 'pick exact date' },
-            ];
-            return (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
-                {presets.map(p => {
-                  const active = syncFromType === p.key;
-                  return (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => {
-                        setSyncFromType(p.key);
-                        if (p.date) setSyncFromDate(p.date);
-                        else if (!syncFromDate || syncFromDate === '2000-01-01') setSyncFromDate(dAgo(90));
-                      }}
-                      style={{
-                        padding: '11px 10px', borderRadius: 12, cursor: 'pointer', textAlign: 'left',
-                        background: active ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.02)',
-                        border: `1px solid ${active ? 'rgba(99,102,241,0.45)' : 'rgba(255,255,255,0.07)'}`,
-                        transition: 'all 0.15s',
-                      }}
-                    >
-                      <div style={{ fontSize: 13, fontWeight: 600, color: active ? '#a5b4fc' : '#e2e8f0' }}>{p.label}</div>
-                      {p.sub && <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{p.sub}</div>}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
-          {/* Custom date picker */}
+          {/* Custom from/to pickers */}
           {syncFromType === 'custom' && (
-            <div style={{ animation: 'domainGuideIn 0.2s ease' }}>
-              <label style={{ ...labelSt, marginBottom: 8 }}>Store launch / start date</label>
-              <input
-                type="date"
-                value={syncFromDate && syncFromDate !== '2000-01-01' ? syncFromDate : ''}
-                onChange={e => setSyncFromDate(e.target.value)}
-                max={new Date().toISOString().split('T')[0]}
-                placeholder="YYYY-MM-DD"
-                style={{ ...inp, colorScheme: 'dark' }}
-                onFocus={inpFocus} onBlur={inpBlur}
-              />
+            <div style={{ animation: 'domainGuideIn 0.2s ease', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 14, padding: 18 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div>
+                  <label style={{ ...labelSt, marginBottom: 8 }}>From Date</label>
+                  <input
+                    type="date"
+                    value={syncFromDate && syncFromDate !== '2000-01-01' ? syncFromDate : ''}
+                    onChange={e => setSyncFromDate(e.target.value)}
+                    max={syncToDate || todayStr}
+                    style={{ ...inp, colorScheme: 'dark', padding: '12px 14px' }}
+                    onFocus={inpFocus} onBlur={inpBlur}
+                  />
+                </div>
+                <div>
+                  <label style={{ ...labelSt, marginBottom: 8 }}>To Date <span style={{ color: '#475569', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>(optional)</span></label>
+                  <input
+                    type="date"
+                    value={syncToDate || ''}
+                    onChange={e => setSyncToDate && setSyncToDate(e.target.value)}
+                    min={syncFromDate && syncFromDate !== '2000-01-01' ? syncFromDate : undefined}
+                    max={todayStr}
+                    style={{ ...inp, colorScheme: 'dark', padding: '12px 14px' }}
+                    onFocus={inpFocus} onBlur={inpBlur}
+                  />
+                </div>
+              </div>
+              <p style={{ margin: '10px 0 0', fontSize: 11.5, color: '#475569', lineHeight: 1.5 }}>
+                Leave <strong style={{ color: '#64748b' }}>To Date</strong> empty to keep syncing up to today automatically.
+              </p>
             </div>
           )}
 
           {/* Confirmation hint */}
-          {syncFromDate && syncFromType !== 'custom' || (syncFromType === 'custom' && syncFromDate && syncFromDate !== '2000-01-01') ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(52,211,153,0.9)', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+          {rangeValid && (
+            <div style={{ marginTop: 12, fontSize: 12.5, color: 'rgba(52,211,153,0.9)', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
               <span>✓</span>
               {syncFromType === 'all'
-                ? 'Fetching your entire order history.'
-                : `Fetching orders from ${new Date(syncFromDate + 'T12:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })} to today.`}
+                ? 'Importing your entire order history.'
+                : `Importing orders from ${new Date(syncFromDate + 'T12:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })} to ${syncToDate ? new Date(syncToDate + 'T12:00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' }) : 'today'}.`}
             </div>
-          ) : null}
+          )}
         </div>
 
         {/* Buttons */}

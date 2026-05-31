@@ -86,7 +86,7 @@ async function registerShopifyWebhooks(domain, accessToken, clientId = null) {
  * Validates Shopify credentials, then creates a store record in Supabase.
  */
 app.post('/api/store', async (req, res) => {
-  const { owner_id, store_name, shopify_domain, shopify_client_id, shopify_access_token, primary_color, dashboard_style, sync_from_date } = req.body;
+  const { owner_id, store_name, shopify_domain, shopify_client_id, shopify_access_token, primary_color, dashboard_style, sync_from_date, sync_to_date } = req.body;
 
   if (!owner_id || !shopify_domain || !shopify_access_token) {
     return res.status(400).json({ error: 'Missing required fields: owner_id, shopify_domain, shopify_access_token' });
@@ -215,7 +215,8 @@ app.post('/api/store', async (req, res) => {
         monthly_view: false,
         all_time_view: false,
         business_analytics: true,
-        sync_from_date: sync_from_date || '2000-01-01'
+        sync_from_date: sync_from_date || '2000-01-01',
+        sync_to_date: sync_to_date || null
       }
     }])
     .select()

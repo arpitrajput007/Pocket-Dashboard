@@ -22,7 +22,7 @@ async function syncStoreData(storeId, { forceFullSync = false, fromDate = null, 
   console.log(`[Sync] ▶ Starting sync for store: ${storeId}`);
 
   // Try fetching with shopify_client_id first, fall back without it
-  let shopify_domain, encryptedToken, encryptedClientId, syncFromDate = '2000-01-01', lastSyncedAt = null;
+  let shopify_domain, encryptedToken, encryptedClientId, syncFromDate = '2000-01-01', syncToDate = null, lastSyncedAt = null;
 
   const { data: store, error } = await supabase
     .from('stores')
@@ -46,6 +46,7 @@ async function syncStoreData(storeId, { forceFullSync = false, fromDate = null, 
     if (store2.dashboard_features?.sync_from_date) {
       syncFromDate = store2.dashboard_features.sync_from_date;
     }
+    syncToDate = store2.dashboard_features?.sync_to_date || null;
   } else if (!store) {
     throw new Error(`Store not found for id=${storeId}`);
   } else {
@@ -56,6 +57,7 @@ async function syncStoreData(storeId, { forceFullSync = false, fromDate = null, 
     if (store.dashboard_features?.sync_from_date) {
       syncFromDate = store.dashboard_features.sync_from_date;
     }
+    syncToDate = store.dashboard_features?.sync_to_date || null;
   }
 
   // Determine sync mode priority:
@@ -80,6 +82,8 @@ async function syncStoreData(storeId, { forceFullSync = false, fromDate = null, 
       const sinceISO = new Date(sinceMs).toISOString();
       console.log(`[Sync] Incremental mode — fetching orders updated since ${sinceISO}`);
       syncUrl = `https://${shopify_domain || ''}.myshopify.com/admin/api/2024-01/orders.json?status=any&updated_at_min=${sinceISO}&limit=250`;
+      // Honor a configured end-date cap (custom bounded range chosen at onboarding)
+      if (syncToDate) syncUrl += `&created_at_max=${syncToDate}T23:59:59Z`;
       syncMode = 'incremental';
     }
   }
@@ -138,7 +142,9 @@ async function syncStoreData(storeId, { forceFullSync = false, fromDate = null, 
   // Paginate orders — use incremental URL if set, otherwise full historical sync
   if (!syncUrl) {
     syncUrl = `https://${shopify_domain}.myshopify.com/admin/api/2024-01/orders.json?status=any&created_at_min=${syncFromDate}T00:00:00Z&limit=250`;
-    console.log(`[Sync] Full sync mode — fetching all orders since ${syncFromDate}`);
+    // Honor a configured end-date cap (custom bounded range chosen at onboarding)
+    if (syncToDate) syncUrl += `&created_at_max=${syncToDate}T23:59:59Z`;
+    console.log(`[Sync] Full sync mode — fetching orders from ${syncFromDate}${syncToDate ? ' to ' + syncToDate : ' onwards'}`);
   }
 
   let url = syncUrl;

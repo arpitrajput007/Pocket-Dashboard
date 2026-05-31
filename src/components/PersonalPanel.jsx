@@ -311,9 +311,10 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
   const [showToken, setShowToken] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState('');
+  // Free period: 3 months (90 days) from the day the store connected to Pocket Dashboard
   const msElapsed   = Date.now() - storeCreatedAt;
   const daysElapsed = Math.floor(msElapsed / (1000 * 60 * 60 * 24));
-  const totalDays   = 14;
+  const totalDays   = 90;
   const daysLeft    = Math.max(0, totalDays - daysElapsed);
   const trialPct    = Math.min(100, (daysElapsed / totalDays) * 100);
 
@@ -574,16 +575,23 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
           ))}
         </div>
 
-        {/* Free plan banner — shown only when on free plan and not explicitly expired */}
+        {/* 3-month free plan banner — counts from the day the store connected */}
         {isFree && !isTrialExpired && (
-          <div style={{ padding: '14px 18px', background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.15)', borderRadius: 14, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 18 }}>🎁</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24' }}>Free Plan</div>
-                <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>Full dashboard access. Upgrade anytime for advanced features.</p>
-              </div>
+          <div style={{ padding: '18px 20px', background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.18)', borderRadius: 14, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24' }}>🎁 Free Plan — All Features Included</span>
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                <strong style={{ color: '#fbbf24' }}>{daysLeft} days</strong> left of 3 months
+              </span>
             </div>
+            <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${trialPct}%`, borderRadius: 99, background: trialPct > 85 ? 'linear-gradient(90deg,#f87171,#ef4444)' : 'linear-gradient(90deg,#fbbf24,#f59e0b)', transition: 'width 0.5s ease', boxShadow: trialPct > 85 ? '0 0 8px rgba(248,113,133,0.5)' : '0 0 8px rgba(251,191,36,0.4)' }} />
+            </div>
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>
+              {daysLeft <= 7
+                ? '⚠️ Your free period is ending soon — upgrade to keep all features.'
+                : 'Enjoy full access to every feature, free for your first 3 months.'}
+            </p>
           </div>
         )}
 
