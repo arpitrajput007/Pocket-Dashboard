@@ -3,6 +3,36 @@ import { supabase } from './supabaseClient';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import BrandLogo from './components/BrandLogo';
 
+// ── Error Boundary ────────────────────────────────────────────────────────────
+// Catches any JS crash inside the app and shows a helpful message instead of
+// a pure black screen with no feedback.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error('[ErrorBoundary]', error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'100vh', background:'#07071a', color:'#f1f5f9', fontFamily:'Outfit,sans-serif', gap:24, padding:40, textAlign:'center' }}>
+          <div style={{ fontSize:40 }}>⚠️</div>
+          <h2 style={{ margin:0, fontSize:22, fontWeight:700 }}>Something went wrong</h2>
+          <p style={{ margin:0, color:'rgba(255,255,255,0.5)', fontSize:14, maxWidth:480, lineHeight:1.7 }}>
+            The dashboard hit an unexpected error. Please <strong style={{color:'#a5b4fc'}}>hard-refresh</strong> (Cmd+Shift+R / Ctrl+Shift+R) — this usually clears it.
+          </p>
+          <details style={{ maxWidth:600, width:'100%', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:12, padding:'12px 16px', textAlign:'left' }}>
+            <summary style={{ cursor:'pointer', fontSize:13, color:'rgba(255,255,255,0.5)', marginBottom:8 }}>Technical details</summary>
+            <pre style={{ fontSize:12, color:'#f87171', whiteSpace:'pre-wrap', wordBreak:'break-word', margin:0 }}>{this.state.error?.toString()}</pre>
+          </details>
+          <button onClick={() => window.location.reload()} style={{ padding:'12px 28px', borderRadius:10, border:'none', background:'linear-gradient(135deg,#6366f1,#4f46e5)', color:'#fff', fontWeight:700, fontSize:14, cursor:'pointer' }}>
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Lazy load pages for better performance
 const Landing = lazy(() => import('./components/Landing'));
 const Login = lazy(() => import('./components/Login'));
@@ -150,30 +180,32 @@ export default function App() {
   if (loading) return <LoadingFallback />;
 
   return (
-    <Suspense fallback={<LoadingFallback />}>
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route 
-          path="/login" 
-          element={session ? <Navigate to="/dashboard" /> : <Login />} 
-        />
-        <Route 
-          path="/signup" 
-          element={session ? <Navigate to="/dashboard" /> : <Signup />} 
-        />
-        <Route 
-          path="/dashboard" 
-          element={session ? <PersonalPanel session={session} store={store} onStoreConnected={refreshStore} /> : <Navigate to="/login" />} 
-        />
-        
-        {/* Compatibility routes */}
-        <Route path="/onboard" element={<Navigate to="/dashboard" />} />
-        <Route path="/privacy" element={<PrivacyPolicy />} />
-        <Route path="/terms" element={<TermsAndConditions />} />
-        <Route path="/contact-us" element={<ContactPage />} />
-        <Route path="*" element={<Navigate to="/" />} />
-      </Routes>
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={<LoadingFallback />}>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route
+            path="/login"
+            element={session ? <Navigate to="/dashboard" /> : <Login />}
+          />
+          <Route
+            path="/signup"
+            element={session ? <Navigate to="/dashboard" /> : <Signup />}
+          />
+          <Route
+            path="/dashboard"
+            element={session ? <PersonalPanel session={session} store={store} onStoreConnected={refreshStore} /> : <Navigate to="/login" />}
+          />
+
+          {/* Compatibility routes */}
+          <Route path="/onboard" element={<Navigate to="/dashboard" />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/terms" element={<TermsAndConditions />} />
+          <Route path="/contact-us" element={<ContactPage />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
