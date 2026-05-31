@@ -278,8 +278,8 @@ export function calcPL(revenue, deliveredCount, adCost, fulfilledCount = 0, item
     items.forEach(item => {
       // Title fallback: products whose line items carry no SKU are indexed by
       // 'TITLE:<title>' in the pricing map, so resolve both the SKU and TITLE key.
-      const skuKey = item.sku;
-      const titleKey = item.title ? 'TITLE:' + item.title : null;
+      const skuKey = item.sku ? item.sku.trim().toLowerCase() : null;
+      const titleKey = item.title ? 'TITLE:' + item.title.trim().toLowerCase() : null;
       const pricing =
         (skuKey && productPricing[skuKey]) ||
         (titleKey && productPricing[titleKey]) ||

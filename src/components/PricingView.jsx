@@ -364,10 +364,16 @@ export default function PricingView({ store }) {
       status: 'active',
     }]).select().single();
     if (error) { showToast('Failed: ' + error.message, 'error'); return; }
-    setProducts(prev => [...prev, { ...data, _dirty: false, _origCost: data.cost_price, _origShip: data.shipping_cost }]);
+    const newProd = { ...data, _dirty: false, _origCost: data.cost_price, _origShip: data.shipping_cost };
+    setProducts(prev => [...prev, newProd]);
     setShowAddModal(false);
     setNewProduct({ title: '', sku: '', cost_price: 0, selling_price: 0, shipping_cost: 135 });
-    showToast('Product added!');
+    
+    if (data.cost_price > 0 || data.shipping_cost > 0) {
+      setCostDateModal({ mode: 'single', items: [{ ...newProd, _dirty: true, _origCost: 0, _origShip: 0 }], date: today() });
+    } else {
+      showToast('Product added!');
+    }
   }
 
   function openPackModal(parent) {
@@ -396,9 +402,15 @@ export default function PricingView({ store }) {
       pack_size: Number(pack_size),
     }]).select().single();
     if (error) { showToast('Failed to create pack: ' + error.message, 'error'); return; }
-    setProducts(prev => [...prev, { ...data, _dirty: false, _origCost: data.cost_price, _origShip: data.shipping_cost }]);
+    const newPack = { ...data, _dirty: false, _origCost: data.cost_price, _origShip: data.shipping_cost };
+    setProducts(prev => [...prev, newPack]);
     setPackModal(null);
-    showToast(`Pack of ${pack_size} added`);
+    
+    if (data.cost_price > 0 || data.shipping_cost > 0) {
+      setCostDateModal({ mode: 'single', items: [{ ...newPack, _dirty: true, _origCost: 0, _origShip: 0 }], date: today() });
+    } else {
+      showToast(`Pack of ${pack_size} added`);
+    }
   }
 
   async function deletePack(pack) {

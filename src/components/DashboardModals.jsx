@@ -69,8 +69,9 @@ function ProductPNLModal({ dateStr, prettyDate, dayOrders, adCosts, adProductBre
       const packSize = extractPackSize(variantTitle);
       if (!productMap[key]) {
         const pp = productPricing;
-        const lookupKey = li.sku || ('TITLE:' + li.title);
-        const pricing = pp[lookupKey] || pp['TITLE:' + li.title] ||
+        const lookupKey = li.sku ? li.sku.trim().toLowerCase() : ('TITLE:' + (li.title||'').trim().toLowerCase());
+        const altLookupKey = 'TITLE:' + (li.title||'').trim().toLowerCase();
+        const pricing = pp[lookupKey] || pp[altLookupKey] ||
           Object.values(pp).find(p => p.title && p.title.toLowerCase() === (li.title||'').toLowerCase()) ||
           null;
         // Pack override (owner-defined): total cost is for the whole pack, so derive per-unit for display.
@@ -620,8 +621,9 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
   // Per-product COGS from delivered items
   const cogsMap = {};
   allItems.filter(item => item.isDelivered).forEach(item => {
-    const lookupKey = item.sku || ('TITLE:' + item.title);
-    const pricing = productPricing[lookupKey] || { cp: PRODUCT_COST };
+    const lookupKey = item.sku ? item.sku.trim().toLowerCase() : ('TITLE:' + (item.title||'').trim().toLowerCase());
+    const altLookupKey = 'TITLE:' + (item.title||'').trim().toLowerCase();
+    const pricing = productPricing[lookupKey] || productPricing[altLookupKey] || { cp: PRODUCT_COST };
     const packSize = item.packSize || 1;
     const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
     const costPerUnit = packOverride

@@ -96,8 +96,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
           };
           // Index by SKU (preferred) and by TITLE so line items without a SKU
           // still resolve their real cost instead of falling back to the default.
-          if (p.sku) pricing[p.sku] = entry;
-          if (p.title) pricing['TITLE:' + p.title] = entry;
+          if (p.sku) pricing[p.sku.trim().toLowerCase()] = entry;
+          if (p.title) pricing['TITLE:' + p.title.trim().toLowerCase()] = entry;
         } else {
           // Pack row — index by parent SKU + pack size (and parent TITLE).
           const parent = baseById.get(p.parent_product_id);
@@ -107,8 +107,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
               shipping: Number(p.shipping_cost) || 0,
               history: costHistory[p.id] || null,
             };
-            if (parent.sku) pricing[`__pack__${parent.sku}__${p.pack_size}`] = packEntry;
-            if (parent.title) pricing[`__pack__TITLE:${parent.title}__${p.pack_size}`] = packEntry;
+            if (parent.sku) pricing[`__pack__${parent.sku.trim().toLowerCase()}__${p.pack_size}`] = packEntry;
+            if (parent.title) pricing[`__pack__TITLE:${parent.title.trim().toLowerCase()}__${p.pack_size}`] = packEntry;
           }
         }
       });
@@ -260,15 +260,15 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     orders.forEach(o => {
       const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
       lineItems.forEach(li => {
-        const sku = li.sku || '';
-        const title = li.title || 'Unknown';
+        const sku = li.sku ? li.sku.trim().toLowerCase() : '';
+        const title = li.title ? li.title.trim().toLowerCase() : 'unknown';
         // Resolve cost the same way calcPL does: SKU first, then TITLE fallback
         const entry = (sku && productPricing[sku]) || productPricing['TITLE:' + title];
         // Missing = no pricing row at all, OR a row whose cost price is 0/unset
         const missing = !entry || !entry.cp || entry.cp <= 0;
         if (missing) {
           const k = title + '||' + sku;
-          if (!seen.has(k)) seen.set(k, { title, sku, units: 0, hasRow: !!entry });
+          if (!seen.has(k)) seen.set(k, { title: li.title || 'Unknown', sku: li.sku || '', units: 0, hasRow: !!entry });
           seen.get(k).units += parseInt(li.quantity || 1);
         }
       });
