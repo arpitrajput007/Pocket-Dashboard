@@ -574,30 +574,25 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
           ))}
         </div>
 
-        {/* Free Trial progress bar */}
+        {/* Free plan banner — shown only when on free plan and not explicitly expired */}
         {isFree && !isTrialExpired && (
-          <div style={{ padding: '18px 20px', background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.18)', borderRadius: 14, marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24' }}>Free Trial Progress</span>
-              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
-                <strong style={{ color: '#fbbf24' }}>{daysLeft} days</strong> remaining of 14
-              </span>
+          <div style={{ padding: '14px 18px', background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.15)', borderRadius: 14, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 18 }}>🎁</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24' }}>Free Plan</div>
+                <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>Full dashboard access. Upgrade anytime for advanced features.</p>
+              </div>
             </div>
-            <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${trialPct}%`, borderRadius: 99, background: trialPct > 80 ? 'linear-gradient(90deg,#f87171,#ef4444)' : 'linear-gradient(90deg,#fbbf24,#f59e0b)', transition: 'width 0.5s ease', boxShadow: trialPct > 80 ? '0 0 8px rgba(248,113,133,0.5)' : '0 0 8px rgba(251,191,36,0.4)' }} />
-            </div>
-            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>
-              {daysLeft <= 3 ? '⚠️ Trial ending soon — upgrade to keep your analytics running.' : 'Upgrade anytime to unlock full analytics and remove limits.'}
-            </p>
           </div>
         )}
 
-        {/* Trial expired warning */}
+        {/* Explicitly expired — only when subscription_status === 'expired' */}
         {isTrialExpired && (
           <div style={{ padding: '18px 20px', background: 'rgba(248,113,133,0.06)', border: '1px solid rgba(248,113,133,0.22)', borderRadius: 14, marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#f87171', marginBottom: 4 }}>⏳ Free Trial Expired</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#f87171', marginBottom: 4 }}>⏳ Subscription Expired</div>
             <p style={{ margin: 0, fontSize: 12.5, color: 'rgba(255,255,255,0.45)', lineHeight: 1.7 }}>
-              Your 14-day free trial has ended. Upgrade to continue accessing real-time analytics, profit tracking, and AI Co-Pilot.
+              Your subscription has ended. Upgrade to continue accessing your analytics.
             </p>
           </div>
         )}
@@ -675,7 +670,10 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
   
   const trialDuration = 14 * 24 * 60 * 60 * 1000;
   const storeCreatedAt = store?.created_at ? new Date(store.created_at).getTime() : Date.now();
-  const isTrialExpired = isConnected && (Date.now() - storeCreatedAt > trialDuration) && store.subscription_status !== 'active';
+  // Only block the dashboard when the subscription is EXPLICITLY marked expired by the backend.
+  // Time-based expiry is disabled until a billing system is wired up — prevents stores from
+  // being locked out without a payment flow in place.
+  const isTrialExpired = isConnected && store?.subscription_status === 'expired';
 
   const handleSignOut = () => supabase.auth.signOut();
 
