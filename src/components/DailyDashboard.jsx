@@ -303,8 +303,26 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                 {currentTiles.map(d => {
                   const isP = d.profit >= 0;
                   const op = isP ? (scoreboardData.maxProfit > 0 ? 0.15 + 0.5 * (d.profit / scoreboardData.maxProfit) : 0.2) : (scoreboardData.maxLoss > 0 ? 0.15 + 0.5 * (Math.abs(d.profit) / scoreboardData.maxLoss) : 0.2);
+                  const dateStr = toDateStr(d.date);
+                  const handleTileClick = () => {
+                    // Expand feed range to include this date if needed
+                    if (dateStr < feedStart) setFeedStart(dateStr);
+                    if (dateStr > feedEnd)   setFeedEnd(dateStr);
+                    // Scroll after a short delay to let feed re-render if range changed
+                    setTimeout(() => {
+                      const el = document.getElementById(`day-${dateStr}`);
+                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 150);
+                  };
                   return (
-                    <div key={d.date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 16, background: isP ? `rgba(16, 185, 129, ${op})` : `rgba(239, 68, 68, ${op})`, borderRadius: 12, border: `1px solid ${isP ? `rgba(16, 185, 129, ${op + 0.3})` : `rgba(239, 68, 68, ${op + 0.3})`}` }}>
+                    <div
+                      key={d.date}
+                      onClick={handleTileClick}
+                      title={`Jump to ${d.date.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })}`}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 16, background: isP ? `rgba(16, 185, 129, ${op})` : `rgba(239, 68, 68, ${op})`, borderRadius: 12, border: `1px solid ${isP ? `rgba(16, 185, 129, ${op + 0.3})` : `rgba(239, 68, 68, ${op + 0.3})`}`, cursor: 'pointer', transition: 'transform 0.15s, box-shadow 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = isP ? '0 4px 16px rgba(16,185,129,0.3)' : '0 4px 16px rgba(239,68,68,0.3)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none'; }}
+                    >
                       <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600, fontSize: 13, textTransform: 'uppercase' }}>{d.date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}</span>
                       <span style={{ color: isP ? '#a7f3d0' : '#fecaca', fontWeight: 700, fontSize: 18 }}>{isP ? '+' : '-'}{fmt(Math.abs(d.profit))}</span>
                     </div>
@@ -388,7 +406,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
           });
 
           return (
-            <div key={dateStr} className="day-block glass">
+            <div key={dateStr} id={`day-${dateStr}`} className="day-block glass">
               <div className="day-header">
                 <h2>{pretty}</h2>
                 <div className="day-actions">
