@@ -638,6 +638,26 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
   });
   const cogsRows = Object.values(cogsMap);
   const revenueUnits = allItems.filter(i => i.isDelivered).reduce((s, i) => s + parseInt(i.quantity || 1), 0);
+
+  // Per-product shipping breakdown from fulfilled items
+  const shippingMap = {};
+  allItems.filter(item => item.isFulfilled).forEach(item => {
+    const lookupKey = item.sku ? item.sku.trim().toLowerCase() : ('TITLE:' + (item.title||'').trim().toLowerCase());
+    const altLookupKey = 'TITLE:' + (item.title||'').trim().toLowerCase();
+    const pricing = productPricing[lookupKey] || productPricing[altLookupKey] || { shipping: SHIPPING_COST };
+    const packSize = item.packSize || 1;
+    const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
+    const shipPerUnit = packOverride && packOverride.shipping != null
+      ? effectiveShippingCost(packOverride.history, item.orderDate, packOverride.shipping)
+      : effectiveShippingCost(pricing.history, item.orderDate, pricing.shipping != null ? pricing.shipping : SHIPPING_COST);
+    const qty = parseInt(item.quantity || 1);
+    const variantTitle = item.variant_title || '';
+    const key = (item.title || 'Unknown') + (variantTitle ? '||' + variantTitle : '');
+    if (!shippingMap[key]) shippingMap[key] = { title: item.title || 'Unknown', variantTitle, units: 0, shipPerUnit, total: 0 };
+    shippingMap[key].units += qty;
+    shippingMap[key].total += shipPerUnit * qty;
+  });
+  const shippingRows = Object.values(shippingMap).sort((a, b) => b.total - a.total);
   const revenueOrderCount = (revBreakdown.deliveredCount || 0) + (revBreakdown.prepaidCount || 0);
 
   const grossProfit = pl.revenue - pl.productCost;
@@ -737,12 +757,28 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
           {/* Operating Expenses */}
           {sec(<>
             <SecHead label="Operating Expenses" total={`– ${fmt(pl.shippingCost + pl.adCost)}`} totalColor="var(--loss-color)" icon="🚚" />
-            <RevRow
-              label="Shipping & Logistics"
-              sub={`${pl.fulfilledCount || 0} fulfilled orders × avg courier rate`}
-              value={`– ${fmt(pl.shippingCost)}`}
-              valueColor="var(--loss-color)"
-            />
+            {/* Shipping & Logistics header row */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '11px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                <div style={{ color: 'var(--text-main)', fontSize: 14 }}>Shipping &amp; Logistics</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 3 }}>{pl.fulfilledCount || 0} fulfilled orders · courier charged per shipment</div>
+              </div>
+              <span style={{ color: 'var(--loss-color)', fontSize: 14, fontWeight: 600, flexShrink: 0 }}>– {fmt(pl.shippingCost)}</span>
+            </div>
+            {/* Per-product shipping rows */}
+            {shippingRows.length > 0 && shippingRows.map((row, i) => (
+              <div key={row.title + row.variantTitle} style={{ padding: '9px 16px 9px 28px', borderBottom: i < shippingRows.length - 1 ? '1px solid rgba(255,255,255,0.03)' : '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, background: 'rgba(0,0,0,0.12)' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: 500, wordBreak: 'break-word', lineHeight: 1.4 }}>{row.title}</div>
+                  {row.variantTitle && <div style={{ color: '#a78bfa', fontSize: 12, marginTop: 2 }}>{row.variantTitle}</div>}
+                  <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 3 }}>
+                    <span style={{ color: '#60a5fa', fontWeight: 600 }}>{row.units} unit{row.units !== 1 ? 's' : ''}</span>
+                    {' × '}{fmt(row.shipPerUnit)}/unit
+                  </div>
+                </div>
+                <span style={{ color: 'var(--loss-color)', fontSize: 13, fontWeight: 600, flexShrink: 0, opacity: 0.85 }}>– {fmt(row.total)}</span>
+              </div>
+            ))}
             <div style={{ borderBottom: 'none' }}>
               <RevRow
                 label="Marketing / Ad Spend"
