@@ -245,11 +245,15 @@ function ComingSoon({ icon: Icon, title, description }) {
 /* ─────────────────────────────────────────────
    SIDEBAR NAV ITEM — Premium active state
 ───────────────────────────────────────────── */
-function NavItem({ icon: Icon, label, active, onClick, badge }) {
+function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
   const [hovered, setHovered] = useState(false);
+  const handleDoubleClick = () => {
+    if (tabKey) window.open(`${window.location.origin}/dashboard#${tabKey}`, '_blank');
+  };
   return (
     <button
       onClick={onClick}
+      onDoubleClick={handleDoubleClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -714,13 +718,19 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
    MAIN PERSONAL PANEL
 ───────────────────────────────────────────── */
 export default function PersonalPanel({ session, store, onStoreConnected }) {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','sheet','products','pricing','connect','advanced','settings','support']);
+  const hashTab = window.location.hash.replace('#', '');
+  const [activeTab, setActiveTab] = useState(validTabs.has(hashTab) ? hashTab : 'dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   
   const [currentTime, setCurrentTime] = useState(new Date());
   const [lastSyncedTime, setLastSyncedTime] = useState(new Date());
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    window.location.hash = activeTab;
+  }, [activeTab]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -914,29 +924,29 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             <div style={{ fontSize: '9.5px', fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '1.2px', textTransform: 'uppercase', padding: '8px 10px 6px', marginBottom: '2px' }}>
               Analytics
             </div>
-            <NavItem icon={LayoutDashboard} label="Daily Dashboard" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={BarChart} label="Weekly Performance" active={activeTab === 'weekly'} onClick={() => { setActiveTab('weekly'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={Calendar} label="Monthly Overview" active={activeTab === 'monthly'} onClick={() => { setActiveTab('monthly'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={TrendingUp} label="All-Time Analytics" active={activeTab === 'all-time'} onClick={() => { setActiveTab('all-time'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={PieChart} label="Business Analytics" active={activeTab === 'analytics'} onClick={() => { setActiveTab('analytics'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={List} label="Sheet View" active={activeTab === 'sheet'} onClick={() => { setActiveTab('sheet'); setMobileSidebarOpen(false); }} />
+            <NavItem icon={LayoutDashboard} label="Daily Dashboard" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setMobileSidebarOpen(false); }} tabKey="dashboard" />
+            <NavItem icon={BarChart} label="Weekly Performance" active={activeTab === 'weekly'} onClick={() => { setActiveTab('weekly'); setMobileSidebarOpen(false); }} tabKey="weekly" />
+            <NavItem icon={Calendar} label="Monthly Overview" active={activeTab === 'monthly'} onClick={() => { setActiveTab('monthly'); setMobileSidebarOpen(false); }} tabKey="monthly" />
+            <NavItem icon={TrendingUp} label="All-Time Analytics" active={activeTab === 'all-time'} onClick={() => { setActiveTab('all-time'); setMobileSidebarOpen(false); }} tabKey="all-time" />
+            <NavItem icon={PieChart} label="Business Analytics" active={activeTab === 'analytics'} onClick={() => { setActiveTab('analytics'); setMobileSidebarOpen(false); }} tabKey="analytics" />
+            <NavItem icon={List} label="Sheet View" active={activeTab === 'sheet'} onClick={() => { setActiveTab('sheet'); setMobileSidebarOpen(false); }} tabKey="sheet" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
             
             <div style={{ fontSize: '9.5px', fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '1.2px', textTransform: 'uppercase', padding: '8px 10px 6px', marginBottom: '2px' }}>
               Management
             </div>
-            <NavItem icon={Package} label="Products" active={activeTab === 'products'} onClick={() => { setActiveTab('products'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={DollarSign} label="Pricing" active={activeTab === 'pricing'} onClick={() => { setActiveTab('pricing'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={Link2} label="Connect your Store" active={activeTab === 'connect'} onClick={() => { setActiveTab('connect'); setMobileSidebarOpen(false); }} badge={isConnected ? null : 'Setup'} />
+            <NavItem icon={Package} label="Products" active={activeTab === 'products'} onClick={() => { setActiveTab('products'); setMobileSidebarOpen(false); }} tabKey="products" />
+            <NavItem icon={DollarSign} label="Pricing" active={activeTab === 'pricing'} onClick={() => { setActiveTab('pricing'); setMobileSidebarOpen(false); }} tabKey="pricing" />
+            <NavItem icon={Link2} label="Connect your Store" active={activeTab === 'connect'} onClick={() => { setActiveTab('connect'); setMobileSidebarOpen(false); }} badge={isConnected ? null : 'Setup'} tabKey="connect" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
             <div style={{ fontSize: '9.5px', fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '1.2px', textTransform: 'uppercase', padding: '4px 10px 6px' }}>
               Account
             </div>
-            <NavItem icon={SlidersHorizontal} label="Advanced Settings" active={activeTab === 'advanced'} onClick={() => { setActiveTab('advanced'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setMobileSidebarOpen(false); }} />
-            <NavItem icon={Headphones} label="Talk to Support" active={activeTab === 'support'} onClick={() => { setActiveTab('support'); setMobileSidebarOpen(false); }} />
+            <NavItem icon={SlidersHorizontal} label="Advanced Settings" active={activeTab === 'advanced'} onClick={() => { setActiveTab('advanced'); setMobileSidebarOpen(false); }} tabKey="advanced" />
+            <NavItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setMobileSidebarOpen(false); }} tabKey="settings" />
+            <NavItem icon={Headphones} label="Talk to Support" active={activeTab === 'support'} onClick={() => { setActiveTab('support'); setMobileSidebarOpen(false); }} tabKey="support" />
           </nav>
 
           {/* User footer */}
