@@ -46,7 +46,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
   const [tilePage, setTilePage] = useState(1);
   const [modalState, setModalState] = useState({ type: null, date: null, prettyDate: null });
   const [quickEditProduct, setQuickEditProduct] = useState(null); // { title, sku, hasRow }
-  const [quickEditValues, setQuickEditValues] = useState({ cp: '', shipping: '' });
+  const today = () => new Date().toISOString().split('T')[0];
+  const [quickEditValues, setQuickEditValues] = useState({ cp: '', shipping: '', effectiveFrom: today() });
   const [quickEditSaving, setQuickEditSaving] = useState(false);
 
   useEffect(() => {
@@ -91,6 +92,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       (data || []).forEach(p => {
         if (!p.parent_product_id) {
           const entry = {
+            id: p.id,
             cp: Number(p.cost_price) || 0,
             sp: Number(p.selling_price) || 0,
             shipping: Number(p.shipping_cost) || 0,
@@ -124,10 +126,11 @@ export default function DailyDashboard({ store, refreshTrigger }) {
     const cp = parseFloat(quickEditValues.cp);
     if (!cp || cp <= 0) return;
     const shipping = parseFloat(quickEditValues.shipping) || 0;
+    const effectiveFrom = quickEditValues.effectiveFrom || today();
     setQuickEditSaving(true);
     try {
+      let productId = quickEditProduct.id;
       if (quickEditProduct.hasRow) {
-        // Row exists but cp is 0/missing — update it
         let q = supabase.from('products')
           .update({ cost_price: cp, shipping_cost: shipping })
           .eq('store_id', store.id)
@@ -136,14 +139,24 @@ export default function DailyDashboard({ store, refreshTrigger }) {
         else q = q.ilike('title', quickEditProduct.title);
         await q;
       } else {
-        // No row yet — insert one
         const row = { store_id: store.id, title: quickEditProduct.title, cost_price: cp, shipping_cost: shipping };
         if (quickEditProduct.sku) row.sku = quickEditProduct.sku;
-        await supabase.from('products').insert(row);
+        const { data: inserted } = await supabase.from('products').insert(row).select('id').single();
+        productId = inserted?.id || null;
+      }
+      // Write a dated cost-history entry so past PNL stays unaffected
+      if (productId) {
+        await supabase.from('product_cost_history').upsert({
+          store_id: store.id,
+          product_id: productId,
+          cost_price: cp,
+          shipping_cost: shipping,
+          effective_from: effectiveFrom,
+        }, { onConflict: 'product_id,effective_from' });
       }
       await fetchPricing();
       setQuickEditProduct(null);
-      setQuickEditValues({ cp: '', shipping: '' });
+      setQuickEditValues({ cp: '', shipping: '', effectiveFrom: today() });
     } catch (err) { console.error('Error saving cost:', err); }
     finally { setQuickEditSaving(false); }
   };
@@ -301,7 +314,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
         const missing = !entry || !entry.cp || entry.cp <= 0;
         if (missing) {
           const k = title + '||' + sku;
-          if (!seen.has(k)) seen.set(k, { title: li.title || 'Unknown', sku: li.sku || '', units: 0, hasRow: !!entry });
+          if (!seen.has(k)) seen.set(k, { title: li.title || 'Unknown', sku: li.sku || '', units: 0, hasRow: !!entry, id: entry?.id || null });
           seen.get(k).units += parseInt(li.quantity || 1);
         }
       });
@@ -329,8 +342,8 @@ export default function DailyDashboard({ store, refreshTrigger }) {
               return (
                 <button key={i} title={it.sku ? `SKU: ${it.sku}` : 'No SKU'}
                   onClick={() => {
-                    if (isEditing) { setQuickEditProduct(null); setQuickEditValues({ cp: '', shipping: '' }); }
-                    else { setQuickEditProduct(it); setQuickEditValues({ cp: '', shipping: '' }); }
+                    if (isEditing) { setQuickEditProduct(null); setQuickEditValues({ cp: '', shipping: '', effectiveFrom: today() }); }
+                    else { setQuickEditProduct(it); setQuickEditValues({ cp: '', shipping: '', effectiveFrom: today() }); }
                   }}
                   style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: isEditing ? 'rgba(251,191,36,0.25)' : 'rgba(251,191,36,0.1)', color: 'rgba(251,191,36,0.95)', border: `1px solid ${isEditing ? 'rgba(251,191,36,0.6)' : 'rgba(251,191,36,0.25)'}`, cursor: 'pointer' }}>
                   {it.title}{it.units > 0 ? ` · ${it.units}u` : ''} {isEditing ? '▲' : '+'}
@@ -347,6 +360,9 @@ export default function DailyDashboard({ store, refreshTrigger }) {
             <div style={{ marginTop: 14, padding: '14px 16px', background: 'rgba(0,0,0,0.25)', borderRadius: 10, border: '1px solid rgba(251,191,36,0.2)' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)', marginBottom: 10 }}>
                 Set cost for <span style={{ color: '#fbbf24' }}>{quickEditProduct.title}</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.4)', marginBottom: 10, lineHeight: 1.5 }}>
+                This cost applies from the effective date onward. Past P&amp;L uses the previous cost. Future changes create a new entry.
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <div>
@@ -368,8 +384,17 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                     style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', fontSize: 13, width: 130, outline: 'none' }}
                   />
                 </div>
-                <button onClick={saveQuickCost} disabled={!quickEditValues.cp || quickEditSaving}
-                  style={{ padding: '7px 18px', borderRadius: 7, background: quickEditValues.cp ? '#fbbf24' : 'rgba(251,191,36,0.3)', color: quickEditValues.cp ? '#000' : 'rgba(255,255,255,0.3)', fontWeight: 700, fontSize: 13, border: 'none', cursor: quickEditValues.cp ? 'pointer' : 'not-allowed' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, color: '#fbbf24', marginBottom: 4, fontWeight: 600 }}>Effective From *</label>
+                  <input
+                    type="date" value={quickEditValues.effectiveFrom}
+                    onChange={e => setQuickEditValues(v => ({ ...v, effectiveFrom: e.target.value }))}
+                    max={today()}
+                    style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(251,191,36,0.35)', background: 'rgba(0,0,0,0.3)', color: 'white', fontSize: 13, width: 150, outline: 'none', colorScheme: 'dark' }}
+                  />
+                </div>
+                <button onClick={saveQuickCost} disabled={!quickEditValues.cp || !quickEditValues.effectiveFrom || quickEditSaving}
+                  style={{ padding: '7px 18px', borderRadius: 7, background: (quickEditValues.cp && quickEditValues.effectiveFrom) ? '#fbbf24' : 'rgba(251,191,36,0.3)', color: (quickEditValues.cp && quickEditValues.effectiveFrom) ? '#000' : 'rgba(255,255,255,0.3)', fontWeight: 700, fontSize: 13, border: 'none', cursor: (quickEditValues.cp && quickEditValues.effectiveFrom) ? 'pointer' : 'not-allowed' }}>
                   {quickEditSaving ? 'Saving…' : 'Save'}
                 </button>
                 <button onClick={() => { setQuickEditProduct(null); setQuickEditValues({ cp: '', shipping: '' }); }}
