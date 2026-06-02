@@ -176,7 +176,10 @@ export function categorizeOrders(orders, shipmentsMap = {}) {
       const isOFD  = srStatus === 'out_for_delivery';
       const isRTO  = srStatus === 'rto' || srStatus === 'undelivered';
       const isCan  = srStatus === 'cancelled';
-      const isFul  = isDel || isIT || isOFD; // anything shipped counts as fulfilled
+      const shopifyFs = (o.fulfillment_status || '').toLowerCase();
+      const shopifyFulfilled = shopifyFs === 'fulfilled' || shopifyFs === 'partial';
+      // Shopify "fulfilled" = seller dispatched the package; counts even if Shiprocket later shows RTO/cancelled
+      const isFul  = isDel || isIT || isOFD || shopifyFulfilled;
 
       if (isFul)  counts['Fulfilled']++;
       if (isDel)  counts['Delivered']++;
