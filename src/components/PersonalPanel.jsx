@@ -247,13 +247,11 @@ function ComingSoon({ icon: Icon, title, description }) {
 ───────────────────────────────────────────── */
 function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
   const [hovered, setHovered] = useState(false);
-  const handleDoubleClick = () => {
-    if (tabKey) window.open(`${window.location.origin}/dashboard#${tabKey}`, '_blank');
-  };
+  const href = tabKey ? `/dashboard#${tabKey}` : undefined;
   return (
-    <button
-      onClick={onClick}
-      onDoubleClick={handleDoubleClick}
+    <a
+      href={href}
+      onClick={e => { e.preventDefault(); onClick?.(); }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -264,7 +262,7 @@ function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
           : hovered ? 'rgba(255,255,255,0.05)' : 'transparent',
         border: active ? '1px solid var(--primary-glow)' : '1px solid transparent',
         color: active ? '#fff' : hovered ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.5)',
-        cursor: 'pointer', textAlign: 'left',
+        cursor: 'pointer', textDecoration: 'none',
         transition: 'all 0.2s ease',
         fontFamily: 'Outfit, sans-serif', fontSize: '13.5px', fontWeight: active ? 600 : 500,
         boxShadow: active ? 'var(--shadow-brand), inset 0 0 20px rgba(34,211,238,0.03)' : 'none',
@@ -291,7 +289,7 @@ function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
         }}>{badge}</span>
       )}
       {active && <ChevronRight size={13} style={{ opacity: 0.35, flexShrink: 0 }} />}
-    </button>
+    </a>
   );
 }
 
