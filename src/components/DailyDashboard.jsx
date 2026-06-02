@@ -45,6 +45,9 @@ export default function DailyDashboard({ store, refreshTrigger }) {
   const [showTileView, setShowTileView] = useState(false);
   const [tilePage, setTilePage] = useState(1);
   const [modalState, setModalState] = useState({ type: null, date: null, prettyDate: null });
+  const [quickEditProduct, setQuickEditProduct] = useState(null); // { title, sku, hasRow }
+  const [quickEditValues, setQuickEditValues] = useState({ cp: '', shipping: '' });
+  const [quickEditSaving, setQuickEditSaving] = useState(false);
 
   useEffect(() => {
     if (store?.id) fetchPricing();
@@ -114,6 +117,35 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       });
       setProductPricing(pricing);
     } catch (err) { console.error('Error fetching pricing:', err); }
+  };
+
+  const saveQuickCost = async () => {
+    if (!quickEditProduct || !store?.id) return;
+    const cp = parseFloat(quickEditValues.cp);
+    if (!cp || cp <= 0) return;
+    const shipping = parseFloat(quickEditValues.shipping) || 0;
+    setQuickEditSaving(true);
+    try {
+      if (quickEditProduct.hasRow) {
+        // Row exists but cp is 0/missing — update it
+        let q = supabase.from('products')
+          .update({ cost_price: cp, shipping_cost: shipping })
+          .eq('store_id', store.id)
+          .is('parent_product_id', null);
+        if (quickEditProduct.sku) q = q.eq('sku', quickEditProduct.sku);
+        else q = q.ilike('title', quickEditProduct.title);
+        await q;
+      } else {
+        // No row yet — insert one
+        const row = { store_id: store.id, title: quickEditProduct.title, cost_price: cp, shipping_cost: shipping };
+        if (quickEditProduct.sku) row.sku = quickEditProduct.sku;
+        await supabase.from('products').insert(row);
+      }
+      await fetchPricing();
+      setQuickEditProduct(null);
+      setQuickEditValues({ cp: '', shipping: '' });
+    } catch (err) { console.error('Error saving cost:', err); }
+    finally { setQuickEditSaving(false); }
   };
 
   const fetchData = async () => {
@@ -289,18 +321,64 @@ export default function DailyDashboard({ store, refreshTrigger }) {
             </div>
           </div>
           <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 }}>
-            These products are using the default ₹555 cost, which makes your profit numbers inaccurate. Set their real cost in the <strong style={{ color: 'rgba(255,255,255,0.8)' }}>Pricing</strong> section to fix your PNL.
+            Click a product to set its cost price and fix your PNL instantly.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {missingCostItems.slice(0, 12).map((it, i) => (
-              <span key={i} title={it.sku ? `SKU: ${it.sku}` : 'No SKU'} style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(251,191,36,0.1)', color: 'rgba(251,191,36,0.95)', border: '1px solid rgba(251,191,36,0.25)' }}>
-                {it.title}{it.units > 0 ? ` · ${it.units}u` : ''}
-              </span>
-            ))}
+            {missingCostItems.slice(0, 12).map((it, i) => {
+              const isEditing = quickEditProduct?.title === it.title && quickEditProduct?.sku === it.sku;
+              return (
+                <button key={i} title={it.sku ? `SKU: ${it.sku}` : 'No SKU'}
+                  onClick={() => {
+                    if (isEditing) { setQuickEditProduct(null); setQuickEditValues({ cp: '', shipping: '' }); }
+                    else { setQuickEditProduct(it); setQuickEditValues({ cp: '', shipping: '' }); }
+                  }}
+                  style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: isEditing ? 'rgba(251,191,36,0.25)' : 'rgba(251,191,36,0.1)', color: 'rgba(251,191,36,0.95)', border: `1px solid ${isEditing ? 'rgba(251,191,36,0.6)' : 'rgba(251,191,36,0.25)'}`, cursor: 'pointer' }}>
+                  {it.title}{it.units > 0 ? ` · ${it.units}u` : ''} {isEditing ? '▲' : '+'}
+                </button>
+              );
+            })}
             {missingCostItems.length > 12 && (
               <span style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 10px', color: 'rgba(255,255,255,0.4)' }}>+{missingCostItems.length - 12} more</span>
             )}
           </div>
+
+          {/* Inline cost entry form */}
+          {quickEditProduct && (
+            <div style={{ marginTop: 14, padding: '14px 16px', background: 'rgba(0,0,0,0.25)', borderRadius: 10, border: '1px solid rgba(251,191,36,0.2)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)', marginBottom: 10 }}>
+                Set cost for <span style={{ color: '#fbbf24' }}>{quickEditProduct.title}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Cost Price (₹) *</label>
+                  <input
+                    type="number" min="0" placeholder="e.g. 555" value={quickEditValues.cp}
+                    onChange={e => setQuickEditValues(v => ({ ...v, cp: e.target.value }))}
+                    onKeyDown={e => e.key === 'Enter' && saveQuickCost()}
+                    autoFocus
+                    style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(251,191,36,0.35)', background: 'rgba(0,0,0,0.3)', color: 'white', fontSize: 13, width: 130, outline: 'none' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Shipping Cost (₹)</label>
+                  <input
+                    type="number" min="0" placeholder="e.g. 135" value={quickEditValues.shipping}
+                    onChange={e => setQuickEditValues(v => ({ ...v, shipping: e.target.value }))}
+                    onKeyDown={e => e.key === 'Enter' && saveQuickCost()}
+                    style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: 'white', fontSize: 13, width: 130, outline: 'none' }}
+                  />
+                </div>
+                <button onClick={saveQuickCost} disabled={!quickEditValues.cp || quickEditSaving}
+                  style={{ padding: '7px 18px', borderRadius: 7, background: quickEditValues.cp ? '#fbbf24' : 'rgba(251,191,36,0.3)', color: quickEditValues.cp ? '#000' : 'rgba(255,255,255,0.3)', fontWeight: 700, fontSize: 13, border: 'none', cursor: quickEditValues.cp ? 'pointer' : 'not-allowed' }}>
+                  {quickEditSaving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => { setQuickEditProduct(null); setQuickEditValues({ cp: '', shipping: '' }); }}
+                  style={{ padding: '7px 12px', borderRadius: 7, background: 'transparent', color: 'rgba(255,255,255,0.4)', fontSize: 13, border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
