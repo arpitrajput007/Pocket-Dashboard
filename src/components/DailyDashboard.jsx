@@ -6,7 +6,7 @@ import { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal }
 import {
   fmt, toDateStr, getOrderDateIST, parseDateStr,
   categorizeOrders, getPaymentCounts, getRevenueBreakdown, getTotalRevenue, calcPL,
-  PREPAID_LAUNCH_DATE, isOrderPrepaidRevenue, isOrderDelivered, extractPackSize, loadCostHistory
+  PREPAID_LAUNCH_DATE, isOrderPrepaidRevenue, isOrderDelivered, isOrderFulfilled, extractPackSize, loadCostHistory
 } from '../utils/dashboardUtils';
 
 const today = () => toDateStr(new Date());
@@ -227,9 +227,10 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       const allItems = [];
       dayOrders.forEach(o => {
         const isCounted = isOrderDelivered(o, shipmentsMap) || isOrderPrepaidRevenue(o);
+        const isFulfilled = isOrderFulfilled(o, shipmentsMap);
         const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
         const orderDate = getOrderDateIST(o);
-        lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize: extractPackSize(li.variant_title), orderDate, isDelivered: isCounted, isFulfilled: isCounted }));
+        lineItems.forEach(li => allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize: extractPackSize(li.variant_title), orderDate, isDelivered: isCounted, isFulfilled }));
       });
       const pl = calcPL(rev, tagsCounts['Delivered']||0, ad, tagsCounts['Fulfilled']||0, allItems, productPricing);
 
@@ -422,12 +423,13 @@ export default function DailyDashboard({ store, refreshTrigger }) {
           dayOrders.forEach(o => {
             const isCounted = isOrderDelivered(o, shipmentsMap) || isOrderPrepaidRevenue(o);
             const isDel = isOrderDelivered(o, shipmentsMap);
+            const isFulfilled = isOrderFulfilled(o, shipmentsMap);
             const lineItems = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
             const orderDate = getOrderDateIST(o);
             lineItems.forEach(li => {
               const packSize = extractPackSize(li.variant_title);
               itemsCount += parseInt(li.quantity || 1) * packSize; // count actual units (pack size × qty)
-              allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize, orderDate, isDelivered: isCounted, isFulfilled: isCounted });
+              allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize, orderDate, isDelivered: isCounted, isFulfilled });
               if (isDel) deliveredItems.push({ ...li, packSize, orderDate });
             });
           });

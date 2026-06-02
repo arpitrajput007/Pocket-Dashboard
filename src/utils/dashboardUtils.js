@@ -143,6 +143,23 @@ export function isOrderDelivered(o, shipmentsMap = {}) {
   return !courierRTO && !plainRTO;
 }
 
+/**
+ * isOrderFulfilled — true when the seller dispatched the package (courier was paid).
+ * Mirrors the isFul logic in categorizeOrders: delivered, in-transit, out-for-delivery,
+ * OR Shopify fulfillment_status = 'fulfilled'/'partial' (covers RTO orders too).
+ */
+export function isOrderFulfilled(o, shipmentsMap = {}) {
+  const shipment = shipmentsMap[o.name];
+  const srStatus = shipment?.status;
+  if (srStatus && srStatus !== 'pending') {
+    const shopifyFs = (o.fulfillment_status || '').toLowerCase();
+    return srStatus === 'delivered' || srStatus === 'in_transit' || srStatus === 'out_for_delivery'
+      || shopifyFs === 'fulfilled' || shopifyFs === 'partial';
+  }
+  const fs = (o.fulfillment_status || '').toLowerCase();
+  return fs === 'fulfilled' || fs === 'partial' || isOrderDelivered(o, shipmentsMap);
+}
+
 export function isOrderPrepaidRevenue(o) {
   const orderDate = o.created_at ? o.created_at.substring(0, 10) : '';
   if (orderDate < PREPAID_LAUNCH_DATE) return false;
