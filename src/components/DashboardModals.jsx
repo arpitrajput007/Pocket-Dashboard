@@ -641,6 +641,31 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
 
   const revenueOrderCount = (revBreakdown.deliveredCount || 0) + (revBreakdown.prepaidCount || 0);
 
+  // Split shipping cost: delivered orders vs non-delivered fulfilled (in-transit, RTO, OFD, etc.)
+  let deliveredShipping = 0, nonDeliveredShipping = 0;
+  if (allItems.some(i => i.isFulfilled)) {
+    allItems.filter(i => i.isFulfilled).forEach(item => {
+      const lookupKey = item.sku ? item.sku.trim().toLowerCase() : ('TITLE:' + (item.title||'').trim().toLowerCase());
+      const altLookupKey = 'TITLE:' + (item.title||'').trim().toLowerCase();
+      const pricing = productPricing[lookupKey] || productPricing[altLookupKey] || { shipping: SHIPPING_COST };
+      const packSize = item.packSize || 1;
+      const packOverride = packSize > 1 ? productPricing[`__pack__${lookupKey}__${packSize}`] : null;
+      const shipPerUnit = packOverride && packOverride.shipping != null
+        ? effectiveShippingCost(packOverride.history, item.orderDate, packOverride.shipping)
+        : effectiveShippingCost(pricing.history, item.orderDate, pricing.shipping != null ? pricing.shipping : SHIPPING_COST);
+      const cost = (shipPerUnit ?? SHIPPING_COST) * parseInt(item.quantity || 1);
+      if (item.isDelivered) deliveredShipping += cost;
+      else nonDeliveredShipping += cost;
+    });
+  } else {
+    // No item data — split proportionally by count
+    const avgRate = (pl.fulfilledCount || 0) > 0 ? pl.shippingCost / pl.fulfilledCount : 0;
+    deliveredShipping = (tCounts['Delivered'] || 0) * avgRate;
+    nonDeliveredShipping = pl.shippingCost - deliveredShipping;
+  }
+  const deliveredFulfilledCount = tCounts['Delivered'] || 0;
+  const nonDeliveredFulfilledCount = Math.max(0, (pl.fulfilledCount || 0) - deliveredFulfilledCount);
+
   const grossProfit = pl.revenue - pl.productCost;
   const grossMargin = pl.revenue > 0 ? ((grossProfit / pl.revenue) * 100).toFixed(1) : '0.0';
   const netMargin = pl.revenue > 0 ? ((pl.profit / pl.revenue) * 100).toFixed(1) : '0.0';
@@ -744,6 +769,22 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
               value={`– ${fmt(pl.shippingCost)}`}
               valueColor="var(--loss-color)"
             />
+            {pl.shippingCost > 0 && <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 16px 8px 28px', borderBottom: '1px solid rgba(255,255,255,0.03)', background: 'rgba(0,0,0,0.12)' }}>
+                <div>
+                  <span style={{ color: 'var(--profit-color)', fontSize: 12, fontWeight: 600 }}>✓ Delivered</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> · {deliveredFulfilledCount} order{deliveredFulfilledCount !== 1 ? 's' : ''}</span>
+                </div>
+                <span style={{ color: 'var(--loss-color)', fontSize: 13, fontWeight: 600, opacity: 0.85 }}>– {fmt(deliveredShipping)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 16px 8px 28px', borderBottom: '1px solid rgba(255,255,255,0.04)', background: 'rgba(0,0,0,0.12)' }}>
+                <div>
+                  <span style={{ color: '#f59e0b', fontSize: 12, fontWeight: 600 }}>↗ Non-Delivered</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> · {nonDeliveredFulfilledCount} order{nonDeliveredFulfilledCount !== 1 ? 's' : ''} (in-transit / RTO / OFD)</span>
+                </div>
+                <span style={{ color: 'var(--loss-color)', fontSize: 13, fontWeight: 600, opacity: 0.85 }}>– {fmt(nonDeliveredShipping)}</span>
+              </div>
+            </>}
             <div style={{ borderBottom: 'none' }}>
               <RevRow
                 label="Marketing / Ad Spend"
