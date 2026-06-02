@@ -46,7 +46,6 @@ export default function DailyDashboard({ store, refreshTrigger }) {
   const [tilePage, setTilePage] = useState(1);
   const [modalState, setModalState] = useState({ type: null, date: null, prettyDate: null });
   const [quickEditProduct, setQuickEditProduct] = useState(null); // { title, sku, hasRow }
-  const today = () => new Date().toISOString().split('T')[0];
   const [quickEditValues, setQuickEditValues] = useState({ cp: '', shipping: '', effectiveFrom: today() });
   const [quickEditSaving, setQuickEditSaving] = useState(false);
 
