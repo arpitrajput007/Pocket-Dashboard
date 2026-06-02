@@ -134,8 +134,11 @@ export function isOrderDelivered(o, shipmentsMap = {}) {
     shipmentStatus === 'failure' ||
     shipmentStatus === 'undelivered'
   );
-  // Plain RTO tags only respected when NO synthetic tag exists at all
-  const plainRTO = !syntheticSS && rawTags.some(t =>
+  // Plain RTO tags are respected when: (a) no synthetic tag, OR (b) synthetic tag is
+  // non-terminal (e.g. out_for_delivery/in_transit) — meaning Shiprocket hasn't confirmed
+  // a final outcome yet, so later plain RTO/Undelivered tags should win.
+  const ssIsTerminal = courierRTO || shipmentStatus === 'delivered';
+  const plainRTO = !ssIsTerminal && rawTags.some(t =>
     !t.startsWith('__ss:') &&
     ((t.includes('rto') && !t.includes('rto_prediction')) || t.includes('undelivered'))
   );

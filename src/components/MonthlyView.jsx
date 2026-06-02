@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { dashboardCache } from '../utils/dashboardCache';
-import { extractPackSize, loadCostHistory, effectiveCostPrice, effectiveShippingCost } from '../utils/dashboardUtils';
+import { extractPackSize, loadCostHistory, effectiveCostPrice, effectiveShippingCost, isOrderDelivered } from '../utils/dashboardUtils';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 
@@ -90,8 +90,8 @@ export default function MonthlyView({ store, refreshTrigger }) {
       
       dOrders.forEach(o => {
         const tags = (o.tags || '').toLowerCase();
-        const isDel = tags.includes('delivered');
-        const isCanc = tags.includes('canceled') || tags.includes('rto') || tags.includes('returned');
+        const isDel = isOrderDelivered(o);
+        const isCanc = tags.includes('canceled') || tags.includes('rto') || tags.includes('returned') || tags.includes('undelivered');
         
         if (isDel) dDel++;
         if (isCanc) dCanc++;

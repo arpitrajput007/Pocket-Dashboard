@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
+import { isOrderDelivered } from '../utils/dashboardUtils';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 
@@ -61,8 +62,8 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
 
     orders.forEach(o => {
       const tags = (o.tags || '').toLowerCase();
-      if (tags.includes('delivered')) delivered++;
-      else if (tags.includes('rto') || tags.includes('returned')) rto++;
+      if (isOrderDelivered(o)) delivered++;
+      else if (tags.includes('rto') || tags.includes('returned') || tags.includes('undelivered')) rto++;
       else if (tags.includes('canceled')) canceled++;
       else if (tags.includes('failed')) failed++;
       else if (tags.includes('in transit') || tags.includes('shipped')) inTransit++;
