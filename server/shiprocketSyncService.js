@@ -168,9 +168,20 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
     throw new Error('Shiprocket is not connected for this store');
   }
 
-  // Resolve the date cutoff: override > stored value > null (fetch all)
-  const fromDate = fromDateOverride || store.shiprocket_sync_from_date || null;
-  if (fromDate) console.log(`[Shiprocket] Fetching orders from ${fromDate} onwards`);
+  // Resolve the date window.
+  // IMPORTANT: Shiprocket's /orders endpoint only returns a recent default window
+  // (~last 30-45 days) when NO from_date is sent. Sending no filter is therefore NOT
+  // "fetch all" — it silently caps the pull to recent orders. So we ALWAYS send an
+  // explicit from_date + to_date. When nothing is configured we default to a wide
+  // 2-year lookback so the full history is pulled.
+  const DEFAULT_LOOKBACK_DAYS = 730;
+  const ymd = (d) => d.toISOString().substring(0, 10);
+  const defaultFrom = ymd(new Date(Date.now() - DEFAULT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000));
+
+  const fromDate = fromDateOverride || store.shiprocket_sync_from_date || defaultFrom;
+  // to_date one day ahead so today's orders are always included regardless of TZ.
+  const toDate = ymd(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  console.log(`[Shiprocket] Fetching orders from ${fromDate} to ${toDate}`);
 
   // Token holder shared across pages; srFetch refreshes it on 401.
   let token = await getValidToken(store);
@@ -188,9 +199,10 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
   let failedPages = 0;
 
   while (page <= totalPages && page <= maxPages) {
-    // Shiprocket supports from_date / to_date filters on the orders list
-    let url = `${SR_BASE}/orders?per_page=100&page=${page}&sort=DESC&sort_by=created_at`;
-    if (fromDate) url += `&from_date=${fromDate}`;
+    // Always pass an explicit from_date + to_date — otherwise Shiprocket caps the
+    // response to a recent default window and the full history never syncs.
+    const url = `${SR_BASE}/orders?per_page=100&page=${page}&sort=DESC&sort_by=created_at`
+      + `&from_date=${fromDate}&to_date=${toDate}`;
 
     let body;
     try {
