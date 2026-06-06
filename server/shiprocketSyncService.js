@@ -174,14 +174,28 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
   // "fetch all" — it silently caps the pull to recent orders. So we ALWAYS send an
   // explicit from_date + to_date. When nothing is configured we default to a wide
   // 2-year lookback so the full history is pulled.
-  const DEFAULT_LOOKBACK_DAYS = 730;
-  const ymd = (d) => d.toISOString().substring(0, 10);
-  const defaultFrom = ymd(new Date(Date.now() - DEFAULT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000));
+  // Shiprocket requires dates as DD-MMM-YYYY (e.g. 08-Jun-2024).
+  // YYYY-MM-DD is silently ignored — the API returns only its default recent
+  // window (~30 days) when the date can't be parsed. Confirmed via probe.
+  const SR_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const srDate = (ms) => {
+    const d = new Date(ms);
+    return `${String(d.getDate()).padStart(2,'0')}-${SR_MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+  };
+  // Convert a stored YYYY-MM-DD string to DD-MMM-YYYY for the API.
+  const toSrDate = (ymdStr) => {
+    if (!ymdStr) return null;
+    const [y, m, day] = ymdStr.split('-');
+    return `${day}-${SR_MONTHS[parseInt(m, 10) - 1]}-${y}`;
+  };
 
-  const fromDate = fromDateOverride || store.shiprocket_sync_from_date || defaultFrom;
-  // to_date one day ahead so today's orders are always included regardless of TZ.
-  const toDate = ymd(new Date(Date.now() + 24 * 60 * 60 * 1000));
-  console.log(`[Shiprocket] Fetching orders from ${fromDate} to ${toDate}`);
+  const DEFAULT_LOOKBACK_DAYS = 730;
+  const ymd = (ms) => new Date(ms).toISOString().substring(0, 10);
+  const rawFrom    = fromDateOverride || store.shiprocket_sync_from_date || null;
+  const fromDateYMD = rawFrom || ymd(Date.now() - DEFAULT_LOOKBACK_DAYS * 864e5); // YYYY-MM-DD for comparisons
+  const fromDate   = toSrDate(fromDateYMD);                                        // DD-MMM-YYYY for API
+  const toDate     = srDate(Date.now() + 864e5);                                   // tomorrow, DD-MMM-YYYY
+  console.log(`[Shiprocket] Fetching orders from ${fromDate} to ${toDate} (DD-MMM-YYYY format)`);
 
   // Token holder shared across pages; srFetch refreshes it on 401.
   let token = await getValidToken(store);
@@ -222,21 +236,22 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
     if (orders.length === 0) break;
 
     // Client-side early stop: Shiprocket returns newest-first, so once we hit
-    // an order older than fromDate the rest of the pages will also be older.
-    if (fromDate) {
+    // an order older than fromDateYMD the rest of the pages will also be older.
+    // Use YYYY-MM-DD (fromDateYMD) for date string comparison, not the API format.
+    if (fromDateYMD) {
       const allOlderThanCutoff = orders.every(o => {
         const orderDate = (o.created_at || '').substring(0, 10);
-        return orderDate && orderDate < fromDate;
+        return orderDate && orderDate < fromDateYMD;
       });
       if (allOlderThanCutoff) {
-        console.log(`[Shiprocket] All orders on page ${page} predate ${fromDate} — stopping early`);
+        console.log(`[Shiprocket] All orders on page ${page} predate ${fromDateYMD} — stopping early`);
         break;
       }
     }
 
-    // Filter out orders older than fromDate before upserting
-    const filteredOrders = fromDate
-      ? orders.filter(o => !o.created_at || (o.created_at || '').substring(0, 10) >= fromDate)
+    // Filter out orders older than fromDateYMD before upserting
+    const filteredOrders = fromDateYMD
+      ? orders.filter(o => !o.created_at || (o.created_at || '').substring(0, 10) >= fromDateYMD)
       : orders;
 
     if (filteredOrders.length === 0) { page++; continue; }
@@ -310,18 +325,18 @@ async function probeShiprocket(storeId) {
   if (!store.shiprocket_connected) throw new Error('Shiprocket not connected');
 
   const token = await getValidToken(store);
-  const ymd = (d) => d.toISOString().substring(0, 10);
-  const from1y = ymd(new Date(Date.now() - 365 * 864e5));
-  const from2y = ymd(new Date(Date.now() - 730 * 864e5));
-  const toToday = ymd(new Date());
-  const toTomorrow = ymd(new Date(Date.now() + 864e5));
+  const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const srFmt = (ms) => { const d=new Date(ms); return `${String(d.getDate()).padStart(2,'0')}-${MO[d.getMonth()]}-${d.getFullYear()}`; };
+  const from1y = srFmt(Date.now() - 365 * 864e5);
+  const from2y = srFmt(Date.now() - 730 * 864e5);
+  const toTomorrow = srFmt(Date.now() + 864e5);
 
   const variants = {
-    A_no_date:            `per_page=50&page=1&sort=DESC&sort_by=created_at`,
-    B_from_to_date:       `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}`,
-    C_from_to:            `per_page=50&page=1&sort=DESC&sort_by=created_at&from=${from2y}&to=${toToday}`,
-    D_filter_by_created:  `per_page=50&page=1&filter_by=created_at&from=${from2y}&to=${toToday}`,
-    E_from_only_1y:       `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}`,
+    A_no_date:               `per_page=50&page=1&sort=DESC&sort_by=created_at`,
+    B_ddmmmyyyy_2y:          `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}`,
+    C_ddmmmyyyy_1y:          `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}&to_date=${toTomorrow}`,
+    D_ddmmmyyyy_p100_2y:     `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}`,
+    E_ddmmmyyyy_p100_1y:     `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}&to_date=${toTomorrow}`,
   };
 
   const results = {};
