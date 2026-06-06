@@ -4,7 +4,7 @@ const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { OpenAI } = require('openai');
 const { syncStoreData } = require('./syncService');
-const { connectShiprocket, syncShiprocketShipments } = require('./shiprocketSyncService');
+const { connectShiprocket, syncShiprocketShipments, probeShiprocket } = require('./shiprocketSyncService');
 const { encrypt, decrypt } = require('./cryptoUtils');
 
 const VITE_SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://missing.supabase.co';
@@ -1014,6 +1014,17 @@ app.delete('/api/shiprocket/disconnect/:storeId', async (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+// TEMPORARY: diagnostic probe of Shiprocket /orders param variants. Remove later.
+app.get('/api/shiprocket/probe/:storeId', async (req, res) => {
+  try {
+    const result = await probeShiprocket(req.params.storeId);
+    res.json(result);
+  } catch (err) {
+    console.error('[Shiprocket probe] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /**
  * POST /api/money-pocket-insights/:storeId

@@ -295,8 +295,61 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
   return { success: true, totalSynced: totalUpserted, failedPages };
 }
 
+/**
+ * TEMPORARY diagnostic: probe the Shiprocket /orders endpoint with several
+ * parameter variants and report what each returns (count + pagination + date
+ * span on page 1). Lets us see ground truth without exposing credentials.
+ * Remove once the sync window issue is resolved.
+ */
+async function probeShiprocket(storeId) {
+  const { data: store, error } = await supabase
+    .from('stores')
+    .select('id, shiprocket_email, shiprocket_password, shiprocket_token, shiprocket_token_expires_at, shiprocket_connected')
+    .eq('id', storeId).single();
+  if (error || !store) throw new Error(`Store not found: ${error?.message}`);
+  if (!store.shiprocket_connected) throw new Error('Shiprocket not connected');
+
+  const token = await getValidToken(store);
+  const ymd = (d) => d.toISOString().substring(0, 10);
+  const from1y = ymd(new Date(Date.now() - 365 * 864e5));
+  const from2y = ymd(new Date(Date.now() - 730 * 864e5));
+  const toToday = ymd(new Date());
+  const toTomorrow = ymd(new Date(Date.now() + 864e5));
+
+  const variants = {
+    A_no_date:            `per_page=50&page=1&sort=DESC&sort_by=created_at`,
+    B_from_to_date:       `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}`,
+    C_from_to:            `per_page=50&page=1&sort=DESC&sort_by=created_at&from=${from2y}&to=${toToday}`,
+    D_filter_by_created:  `per_page=50&page=1&filter_by=created_at&from=${from2y}&to=${toToday}`,
+    E_from_only_1y:       `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}`,
+  };
+
+  const results = {};
+  for (const [label, qs] of Object.entries(variants)) {
+    try {
+      const res = await fetch(`${SR_BASE}/orders?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json().catch(() => ({}));
+      const data = Array.isArray(body.data) ? body.data : [];
+      const dates = data.map(o => (o.created_at || '').slice(0, 10)).filter(Boolean);
+      results[label] = {
+        status: res.status,
+        returned: data.length,
+        pagination: body.meta?.pagination || null,
+        newestDate: dates[0] || null,
+        oldestOnPage: dates[dates.length - 1] || null,
+        message: body.message || null,
+      };
+    } catch (e) {
+      results[label] = { error: e.message };
+    }
+    await sleep(600); // be gentle with rate limits
+  }
+  return { storeId, probedAt: new Date().toISOString(), results };
+}
+
 module.exports = {
   connectShiprocket,
   syncShiprocketShipments,
-  normalizeShiprocketStatus
+  normalizeShiprocketStatus,
+  probeShiprocket
 };
