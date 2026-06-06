@@ -4,7 +4,7 @@ import BrandLogo from './BrandLogo';
 import {
   LayoutDashboard, Link2, Settings, Headphones,
   LogOut, ChevronRight, Unplug, ShieldCheck, Sparkles, SlidersHorizontal, Package, DollarSign,
-  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw
+  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet
 } from 'lucide-react';
 
 // Lazy load dashboard sub-views for performance
@@ -19,6 +19,7 @@ const AllTimeView = lazy(() => import('./AllTimeView'));
 const BusinessAnalytics = lazy(() => import('./BusinessAnalytics'));
 const SheetView = lazy(() => import('./SheetView'));
 const CopilotChat = lazy(() => import('./CopilotChat'));
+const MoneyInMyPocket = lazy(() => import('./MoneyInMyPocket'));
 
 const ViewLoading = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '400px', color: 'rgba(255,255,255,0.2)', fontSize: '14px' }}>
@@ -927,6 +928,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             <NavItem icon={Calendar} label="Monthly Overview" active={activeTab === 'monthly'} onClick={() => { setActiveTab('monthly'); setMobileSidebarOpen(false); }} tabKey="monthly" />
             <NavItem icon={TrendingUp} label="All-Time Analytics" active={activeTab === 'all-time'} onClick={() => { setActiveTab('all-time'); setMobileSidebarOpen(false); }} tabKey="all-time" />
             <NavItem icon={PieChart} label="Business Analytics" active={activeTab === 'analytics'} onClick={() => { setActiveTab('analytics'); setMobileSidebarOpen(false); }} tabKey="analytics" />
+            <NavItem icon={Wallet} label="Money In My Pocket" active={activeTab === 'money'} onClick={() => { setActiveTab('money'); setMobileSidebarOpen(false); }} tabKey="money" />
             <NavItem icon={List} label="Sheet View" active={activeTab === 'sheet'} onClick={() => { setActiveTab('sheet'); setMobileSidebarOpen(false); }} tabKey="sheet" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
@@ -1069,7 +1071,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   )}
                   {activeTab === 'sheet' && isConnected && <SheetView store={store} refreshTrigger={refreshTrigger} />}
                   
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'products', 'advanced', 'copilot-upgrade'].includes(activeTab) && isConnected && store?.subscription_plan === 'starter' && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'products', 'advanced', 'copilot-upgrade'].includes(activeTab) && isConnected && store?.subscription_plan === 'starter' && (
                     <ProRequiredState onUpgradeClick={() => setActiveTab('pricing')} />
                   )}
 
@@ -1077,10 +1079,11 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   {activeTab === 'monthly' && isConnected && store?.subscription_plan !== 'starter' && <MonthlyView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'all-time' && isConnected && store?.subscription_plan !== 'starter' && <AllTimeView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'analytics' && isConnected && store?.subscription_plan !== 'starter' && <BusinessAnalytics store={store} refreshTrigger={refreshTrigger} />}
+                  {activeTab === 'money'    && isConnected && store?.subscription_plan !== 'starter' && <MoneyInMyPocket store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'products' && isConnected && store?.subscription_plan !== 'starter' && <ProductsView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'advanced' && isConnected && store?.subscription_plan !== 'starter' && <AdvancedSettings store={store} />}
 
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'sheet', 'products', 'advanced'].includes(activeTab) && !isConnected && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'advanced'].includes(activeTab) && !isConnected && (
                     <NoStoreState onConnectClick={() => setActiveTab('connect')} />
                   )}
                   {activeTab === 'connect' && (

@@ -1016,6 +1016,58 @@ app.delete('/api/shiprocket/disconnect/:storeId', async (req, res) => {
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 /**
+ * POST /api/money-pocket-insights/:storeId
+ * Body: { month, plData, prevPlData? }
+ * Returns: { insights: string[] }  — 3-4 AI-generated P&L observations.
+ */
+app.post('/api/money-pocket-insights/:storeId', async (req, res) => {
+  const { month, plData, prevPlData } = req.body;
+  if (!plData) return res.status(400).json({ error: 'plData required' });
+
+  const fmt = (n) => '₹' + Math.round(n || 0).toLocaleString('en-IN');
+  const pct = (n) => `${n >= 0 ? '+' : ''}${Number(n).toFixed(1)}%`;
+
+  const prevBlock = prevPlData ? `
+Previous month comparison:
+- Previous take-home: ${fmt(prevPlData.takeHome)}
+- Previous ad spend: ${fmt(prevPlData.adSpend)}
+- Previous RTO count: ${prevPlData.rtoCount}
+- MoM take-home change: ${fmt(plData.takeHome - prevPlData.takeHome)} (${pct((plData.takeHome - prevPlData.takeHome) / Math.max(Math.abs(prevPlData.takeHome), 1) * 100)})
+` : '';
+
+  const prompt = `Indian D2C e-commerce monthly P&L data for ${month}:
+
+Revenue: ${fmt(plData.grossRevenue)} gross, ${fmt(plData.netRevenue)} net after refunds
+Product cost: ${fmt(plData.productCost)}, Shipping: ${fmt(plData.shippingCost)}
+Ad spend: ${fmt(plData.adSpend)} (${plData.grossRevenue > 0 ? ((plData.adSpend / plData.grossRevenue) * 100).toFixed(1) : 0}% of revenue)
+COD charges: ${fmt(plData.codCharges)} (${plData.codCount} orders)
+RTO losses: ${fmt(plData.rtoLoss)} (${plData.rtoCount} orders, ${plData.totalOrders > 0 ? ((plData.rtoCount / plData.totalOrders) * 100).toFixed(1) : 0}% rate)
+Gateway fees: ${fmt(plData.gatewayFees)}, Shopify: ${fmt(plData.shopifyFee)}
+Manual expenses: ${fmt(plData.manualTotal)}
+Money in pocket: ${fmt(plData.takeHome)} (${plData.margin?.toFixed(1)}% margin)
+${prevBlock}
+Generate 3 sharp, specific, data-backed insights that help the store owner understand where profit is being created or lost. Be concise (1-2 sentences each). Return JSON: {"insights": ["...", "...", "..."]}`;
+
+  try {
+    if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: 'OpenAI not configured' });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 400,
+      temperature: 0.5,
+      response_format: { type: 'json_object' },
+    });
+    const parsed = JSON.parse(completion.choices[0]?.message?.content || '{}');
+    const insights = parsed.insights || Object.values(parsed)[0] || [];
+    res.json({ insights: Array.isArray(insights) ? insights : [insights] });
+  } catch (err) {
+    console.error('[MoneyPocket] Insights error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * Auto-sync cron job — runs every 5 minutes.
  * Fetches all active stores and runs an incremental sync for each.
  * Stores are staggered 2 seconds apart to avoid Shopify API bursts.
