@@ -105,6 +105,48 @@ async function connectShiprocket(storeId, email, password, syncFromDate = null) 
   return { connected: true };
 }
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Fetch a Shiprocket URL with retry + backoff on transient failures (429 rate-limit
+ * and 5xx). Returns the parsed body, or throws only after exhausting retries.
+ * A `getToken` callback lets us refresh the bearer token on a 401 mid-run.
+ */
+async function srFetch(url, getToken, { retries = 4 } = {}) {
+  let token = await getToken(false);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+
+    if (res.status === 401) {
+      // Token expired mid-run — force a refresh and retry without counting it.
+      token = await getToken(true);
+      attempt--;
+      continue;
+    }
+
+    if (res.status === 429 || res.status >= 500) {
+      if (attempt === retries) {
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(`status ${res.status}: ${body.message || 'transient error'}`);
+        err.status = res.status;
+        throw err;
+      }
+      const wait = Math.min(2000 * 2 ** attempt, 15000); // 2s,4s,8s,15s
+      console.log(`[Shiprocket] ${res.status} on ${url} — retry ${attempt + 1}/${retries} in ${wait}ms`);
+      await sleep(wait);
+      continue;
+    }
+
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(`status ${res.status}: ${body.message || 'unknown error'}`);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  }
+}
+
 /**
  * Pull Shiprocket orders/shipments for a store and upsert them into `shipments`.
  * Respects shiprocket_sync_from_date — only fetches orders on or after that date.
@@ -130,28 +172,36 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
   const fromDate = fromDateOverride || store.shiprocket_sync_from_date || null;
   if (fromDate) console.log(`[Shiprocket] Fetching orders from ${fromDate} onwards`);
 
+  // Token holder shared across pages; srFetch refreshes it on 401.
   let token = await getValidToken(store);
+  const getToken = async (forceRefresh) => {
+    if (forceRefresh) {
+      console.log('[Shiprocket] Refreshing token mid-run');
+      token = await getValidToken({ ...store, shiprocket_token: null, shiprocket_token_expires_at: null });
+    }
+    return token;
+  };
 
   let page = 1;
   let totalUpserted = 0;
   let totalPages = 1;
+  let failedPages = 0;
 
   while (page <= totalPages && page <= maxPages) {
     // Shiprocket supports from_date / to_date filters on the orders list
     let url = `${SR_BASE}/orders?per_page=100&page=${page}&sort=DESC&sort_by=created_at`;
     if (fromDate) url += `&from_date=${fromDate}`;
-    let res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 
-    // Token might have expired mid-run — refresh once and retry this page
-    if (res.status === 401) {
-      console.log('[Shiprocket] Token rejected (401) — refreshing and retrying');
-      token = await getValidToken({ ...store, shiprocket_token: null, shiprocket_token_expires_at: null });
-      res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    }
-
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(`Shiprocket /orders failed (status ${res.status}): ${body.message || 'unknown error'}`);
+    let body;
+    try {
+      body = await srFetch(url, getToken);
+    } catch (err) {
+      // Don't abort the whole sync on one bad page — log, count it, move on so the
+      // remaining pages still get synced instead of leaving a partial, stuck count.
+      failedPages++;
+      console.warn(`[Shiprocket] ⚠ Page ${page} failed (${err.message}) — skipping`);
+      page++;
+      continue;
     }
 
     const orders = Array.isArray(body.data) ? body.data : [];
@@ -207,19 +257,30 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
       .from('shipments')
       .upsert(rows, { onConflict: 'store_id,shiprocket_order_id' });
 
-    if (upErr) throw new Error(`Shipments upsert failed: ${upErr.message}`);
+    if (upErr) {
+      // Skip this page's write but keep going — a single bad batch shouldn't strand
+      // every later page and freeze the synced count.
+      failedPages++;
+      console.warn(`[Shiprocket] ⚠ Upsert failed on page ${page} (${upErr.message}) — skipping`);
+      page++;
+      continue;
+    }
 
     totalUpserted += rows.length;
     console.log(`[Shiprocket] Page ${page}/${totalPages} — upserted ${rows.length} (total ${totalUpserted})`);
     page++;
   }
 
+  if (failedPages > 0) {
+    console.warn(`[Shiprocket] ⚠ ${failedPages} page(s) failed and were skipped — synced count may be incomplete until next run`);
+  }
+
   await supabase.from('stores')
     .update({ shipments_synced_at: new Date().toISOString() })
     .eq('id', storeId);
 
-  console.log(`[Shiprocket] ✅ Done. ${totalUpserted} shipments synced for store ${storeId}`);
-  return { success: true, totalSynced: totalUpserted };
+  console.log(`[Shiprocket] ✅ Done. ${totalUpserted} shipments synced for store ${storeId} (${failedPages} page(s) skipped)`);
+  return { success: true, totalSynced: totalUpserted, failedPages };
 }
 
 module.exports = {

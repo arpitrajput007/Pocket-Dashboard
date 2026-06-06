@@ -97,6 +97,21 @@ export function effectiveShippingCost(history, orderDate, fallback) {
 }
 
 /**
+ * getShipment — look up a shipment for a Shopify order, tolerant of order-name
+ * prefixes/suffixes. Tries the exact order name first, then a digits-only fallback
+ * (e.g. "EXP1234" → "1234") so stores whose Shopify order names aren't a bare
+ * "#<number>" still join to Shiprocket's channel_order_id. The digits-only alias
+ * keys are populated alongside the exact keys when shipmentsMap is built.
+ */
+export function getShipment(shipmentsMap = {}, orderName) {
+  if (!orderName) return undefined;
+  const direct = shipmentsMap[orderName];
+  if (direct) return direct;
+  const digits = String(orderName).replace(/\D/g, '');
+  return digits ? shipmentsMap[digits] : undefined;
+}
+
+/**
  * isOrderDelivered — determines if an order counts as delivered.
  * Priority: Shiprocket (carrier truth) > Shopify __ss: synthetic tag > plain tags.
  * shipmentsMap: { [orderName]: { status, ... } } — pass empty object when not connected.
@@ -106,7 +121,7 @@ export function effectiveShippingCost(history, orderDate, fallback) {
  */
 export function isOrderDelivered(o, shipmentsMap = {}) {
   // ── 1. Shiprocket source of truth ─────────────────────────────────────────
-  const shipment = shipmentsMap[o.name];
+  const shipment = getShipment(shipmentsMap, o.name);
   if (shipment && shipment.status && shipment.status !== 'pending') {
     return shipment.status === 'delivered';
   }
@@ -152,7 +167,7 @@ export function isOrderDelivered(o, shipmentsMap = {}) {
  * OR Shopify fulfillment_status = 'fulfilled'/'partial' (covers RTO orders too).
  */
 export function isOrderFulfilled(o, shipmentsMap = {}) {
-  const shipment = shipmentsMap[o.name];
+  const shipment = getShipment(shipmentsMap, o.name);
   const srStatus = shipment?.status;
   if (srStatus && srStatus !== 'pending') {
     const shopifyFs = (o.fulfillment_status || '').toLowerCase();
@@ -187,7 +202,7 @@ export function categorizeOrders(orders, shipmentsMap = {}) {
 
   orders.forEach(o => {
     // ── Shiprocket source of truth ─────────────────────────────────────────
-    const shipment = shipmentsMap[o.name];
+    const shipment = getShipment(shipmentsMap, o.name);
     const srStatus = shipment?.status;
     if (srStatus && srStatus !== 'pending') {
       // Use carrier status directly — no Shopify tag parsing needed

@@ -213,12 +213,25 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       // Fetch all shipments for the store — lightweight status rows, no date filter
       // needed because we match by order name (not date).
       if (store.shiprocket_connected) {
-        const { data: smData } = await supabase
-          .from('shipments')
-          .select('shopify_order_name, status, courier, awb, raw_status')
-          .eq('store_id', store.id);
+        // Supabase caps each query at 1000 rows — page through so the join doesn't
+        // silently drop shipments once a store has more than 1000 of them.
         const map = {};
-        (smData || []).forEach(s => { if (s.shopify_order_name) map[s.shopify_order_name] = s; });
+        const PAGE = 1000;
+        for (let from = 0; ; from += PAGE) {
+          const { data: smData } = await supabase
+            .from('shipments')
+            .select('shopify_order_name, status, courier, awb, raw_status')
+            .eq('store_id', store.id)
+            .range(from, from + PAGE - 1);
+          (smData || []).forEach(s => {
+            if (!s.shopify_order_name) return;
+            map[s.shopify_order_name] = s;
+            // digits-only alias so orders with name prefixes/suffixes still match
+            const digits = s.shopify_order_name.replace(/\D/g, '');
+            if (digits && map[digits] === undefined) map[digits] = s;
+          });
+          if (!smData || smData.length < PAGE) break;
+        }
         setShipmentsMap(map);
       }
     } catch (err) { setError(err.message); }
