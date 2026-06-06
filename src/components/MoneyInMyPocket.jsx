@@ -72,7 +72,7 @@ function computePL(orders, shipmentsMap, adSpend, pricing, costConfig, expenses)
     const isFul = isOrderFulfilled(o, shipmentsMap);
     const orderDate = (o.created_at || '').slice(0, 10);
     (o.line_items || []).forEach(li => {
-      const ps = extractPackSize ? extractPackSize(li, pricing) : 1;
+      const ps = extractPackSize(li.variant_title);
       items.push({ sku: li.sku, title: li.title, quantity: li.quantity || 1, isDelivered: isDel, isFulfilled: isFul, orderDate, packSize: ps });
     });
   });
