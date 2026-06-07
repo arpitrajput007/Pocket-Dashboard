@@ -819,81 +819,197 @@ function NetProfitModal({ dateStr, prettyDate, pl, tCounts = {}, pCounts = {}, i
 
 // ── ItemsModal ──────────────────────────────────────────────────────────────
 // mode: 'ordered' (all items) | 'delivered' (delivered items only)
-function ItemsModal({ prettyDate, allItems, mode = 'ordered', onClose }) {
+// When mode === 'delivered', shows a Products / Orders tab toggle.
+function ItemsModal({ prettyDate, allItems, deliveredOrders = [], shipmentsMap = {}, mode = 'ordered', onClose }) {
+  const [activeTab, setActiveTab] = useState('products'); // 'products' | 'orders'
+  const [expandedOrders, setExpandedOrders] = useState(new Set());
+
   const label    = mode === 'delivered' ? 'Items Delivered' : 'Items Ordered';
   const icon     = mode === 'delivered' ? '✅' : '📦';
   const accent   = mode === 'delivered' ? '#34d399' : '#a78bfa';
   const accentBg = mode === 'delivered' ? 'rgba(52,211,153,0.1)' : 'rgba(167,139,250,0.1)';
   const accentBd = mode === 'delivered' ? 'rgba(52,211,153,0.25)' : 'rgba(167,139,250,0.25)';
 
-  // Group by title + variant so "Pack of 2" and "Pack of 3" appear as separate rows
+  // ── Products tab data ───────────────────────────────────────────
   const productMap = {};
   allItems.forEach(li => {
     const variantTitle = li.variant_title || '';
     const key = (li.title || 'Unknown Product') + (variantTitle ? '||' + variantTitle : '');
-    if (!productMap[key]) {
-      productMap[key] = { title: li.title || 'Unknown Product', variantTitle, sku: li.sku || '', qty: 0 };
-    }
-    // qty here is packs ordered; display actual units via packSize
+    if (!productMap[key]) productMap[key] = { title: li.title || 'Unknown Product', variantTitle, sku: li.sku || '', qty: 0 };
     productMap[key].qty += parseInt(li.quantity || 1) * (li.packSize || extractPackSize(variantTitle));
   });
-
-  const products = Object.values(productMap).sort((a, b) => b.qty - a.qty);
+  const products   = Object.values(productMap).sort((a, b) => b.qty - a.qty);
   const totalUnits = products.reduce((s, p) => s + p.qty, 0);
+
+  // Width expands for orders tab so the table isn't cramped
+  const modalWidth = activeTab === 'orders' ? 720 : 480;
+
+  const toggleExpand = (id) => setExpandedOrders(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   return (
     <div className="modal-overlay active" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 480, padding: '28px 24px' }}>
+      <div className="modal" style={{ maxWidth: modalWidth, width: '95vw', padding: '28px 24px', transition: 'max-width 0.2s ease' }}>
 
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>{icon} {label}</div>
             <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#fff' }}>{prettyDate}</h2>
           </div>
-          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
         </div>
 
-        {/* Summary pill */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-          <div style={{ padding: '6px 14px', borderRadius: 8, background: accentBg, border: `1px solid ${accentBd}`, fontSize: 13, fontWeight: 600, color: accent }}>
-            {totalUnits} total units
+        {/* Tab switcher — only for delivered mode */}
+        {mode === 'delivered' && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 18, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: 4, width: 'fit-content' }}>
+            {[['products', '📦 Products'], ['orders', '📋 Orders']].map(([key, lbl]) => (
+              <button key={key} onClick={() => setActiveTab(key)} style={{
+                padding: '6px 16px', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                background: activeTab === key ? accentBg : 'transparent',
+                border: activeTab === key ? `1px solid ${accentBd}` : '1px solid transparent',
+                color: activeTab === key ? accent : 'rgba(255,255,255,0.45)',
+                transition: 'all 0.15s',
+              }}>{lbl}</button>
+            ))}
           </div>
-          <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)', fontSize: 13, fontWeight: 600, color: '#38bdf8' }}>
-            {products.length} SKU{products.length !== 1 ? 's' : ''}
-          </div>
-        </div>
+        )}
 
-        {/* Product list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
-          {products.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>No {mode === 'delivered' ? 'delivered ' : ''}items for this day</div>
-          ) : products.map((p, i) => {
-            const pct = totalUnits > 0 ? (p.qty / totalUnits) * 100 : 0;
-            return (
-              <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
-                    {p.variantTitle && (
-                      <div style={{ fontSize: 11, color: '#a78bfa', marginTop: 2, fontWeight: 600 }}>{p.variantTitle}</div>
-                    )}
-                    {p.sku && !p.sku.startsWith('TITLE:') && (
-                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 1, fontFamily: 'monospace' }}>SKU: {p.sku}</div>
-                    )}
-                  </div>
-                  <div style={{ flexShrink: 0, background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 6, padding: '3px 10px', fontSize: 14, fontWeight: 800, color: '#fbbf24' }}>
-                    {p.qty}×
-                  </div>
-                </div>
-                {/* Quantity bar */}
-                <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #a78bfa, #38bdf8)', borderRadius: 2, transition: 'width 0.4s ease' }} />
-                </div>
+        {/* ── PRODUCTS TAB ────────────────────────────────────── */}
+        {activeTab === 'products' && (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+              <div style={{ padding: '6px 14px', borderRadius: 8, background: accentBg, border: `1px solid ${accentBd}`, fontSize: 13, fontWeight: 600, color: accent }}>
+                {totalUnits} total units
               </div>
-            );
-          })}
-        </div>
+              <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)', fontSize: 13, fontWeight: 600, color: '#38bdf8' }}>
+                {products.length} SKU{products.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+              {products.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>No {mode === 'delivered' ? 'delivered ' : ''}items for this day</div>
+              ) : products.map((p, i) => {
+                const pct = totalUnits > 0 ? (p.qty / totalUnits) * 100 : 0;
+                return (
+                  <div key={i} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</div>
+                        {p.variantTitle && <div style={{ fontSize: 11, color: '#a78bfa', marginTop: 2, fontWeight: 600 }}>{p.variantTitle}</div>}
+                        {p.sku && !p.sku.startsWith('TITLE:') && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 1, fontFamily: 'monospace' }}>SKU: {p.sku}</div>}
+                      </div>
+                      <div style={{ flexShrink: 0, background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 6, padding: '3px 10px', fontSize: 14, fontWeight: 800, color: '#fbbf24' }}>{p.qty}×</div>
+                    </div>
+                    <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #a78bfa, #38bdf8)', borderRadius: 2, transition: 'width 0.4s ease' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ── ORDERS TAB ──────────────────────────────────────── */}
+        {activeTab === 'orders' && (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+              <div style={{ padding: '6px 14px', borderRadius: 8, background: accentBg, border: `1px solid ${accentBd}`, fontSize: 13, fontWeight: 600, color: accent }}>
+                {deliveredOrders.length} delivered order{deliveredOrders.length !== 1 ? 's' : ''}
+              </div>
+              <div style={{ padding: '6px 14px', borderRadius: 8, background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)', fontSize: 13, fontWeight: 600, color: '#38bdf8' }}>
+                {totalUnits} total units
+              </div>
+            </div>
+
+            <div className="orders-table-wrapper" style={{ margin: 0, padding: 0, maxHeight: 400, overflowY: 'auto' }}>
+              {deliveredOrders.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.3)', fontSize: 14 }}>No delivered orders for this day</div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Order #</th>
+                      <th>Customer</th>
+                      <th>Amount</th>
+                      <th>Payment</th>
+                      <th>Revenue</th>
+                      <th>Tags</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deliveredOrders.map(o => {
+                      const isPre       = isOrderPrepaidRevenue(o);
+                      const isDel       = isOrderDelivered(o, shipmentsMap);
+                      const srShipment  = shipmentsMap[o.name];
+                      const isExpanded  = expandedOrders.has(o.id);
+                      const lineItems   = o.line_items ? (typeof o.line_items === 'string' ? JSON.parse(o.line_items) : o.line_items) : [];
+                      return (
+                        <React.Fragment key={o.id}>
+                          <tr className={`order-row ${isExpanded ? 'expanded' : ''}`} onClick={() => toggleExpand(o.id)} style={{ cursor: 'pointer' }}>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12 }}>
+                              <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                {o.name}
+                                <span style={{ fontSize: 10, fontWeight: 700, background: isPre ? 'rgba(129,140,248,0.15)' : 'rgba(251,146,60,0.15)', color: isPre ? '#818cf8' : '#fb923c', border: `1px solid ${isPre ? 'rgba(129,140,248,0.4)' : 'rgba(251,146,60,0.4)'}`, padding: '2px 7px', borderRadius: 4 }}>{isPre ? 'PREPAID' : 'COD'}</span>
+                                {srShipment && srShipment.status !== 'pending' && (
+                                  <span title={`Shiprocket: ${srShipment.raw_status || srShipment.status}${srShipment.courier ? ' · ' + srShipment.courier : ''}${srShipment.awb ? ' · AWB: ' + srShipment.awb : ''}`} style={{ fontSize: 10, fontWeight: 700, background: 'rgba(124,58,237,0.12)', color: '#a78bfa', border: '1px solid rgba(124,58,237,0.3)', padding: '2px 7px', borderRadius: 4, cursor: 'help' }}>🚚 Shiprocket</span>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12 }}>{o.customer_fn} {o.customer_ln}</td>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12 }}>{fmt(o.total_price)}</td>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>{isPre ? 'Prepaid' : 'COD'}</td>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12 }}>
+                              {isDel || isPre
+                                ? <span style={{ color: isPre && !isDel ? '#818cf8' : 'var(--profit-color)', fontWeight: 600 }}>{fmt(o.total_price)}</span>
+                                : <span style={{ color: 'var(--text-muted)', opacity: 0.5 }}>–</span>}
+                            </td>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12 }}>
+                              <div className="order-tags">
+                                {(o.tags || '').split(',').filter(t => t.trim()).map((t, i) => <span key={i} className="order-tag">{t.trim()}</span>)}
+                              </div>
+                            </td>
+                            <td style={{ verticalAlign: 'top', paddingTop: 12 }}>
+                              {o.created_at ? new Date(o.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </td>
+                          </tr>
+                          {isExpanded && lineItems.length > 0 && (
+                            <tr className="expanded-details">
+                              <td colSpan={7}>
+                                <div style={{ padding: '10px 14px', background: 'rgba(0,0,0,0.2)', borderRadius: 8 }}>
+                                  {srShipment && srShipment.status !== 'pending' && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 1 }}>🚚 Shiprocket</span>
+                                      <span style={{ fontSize: 12, color: 'var(--text-main)', fontWeight: 600 }}>{srShipment.raw_status || srShipment.status}</span>
+                                      {srShipment.courier && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>via {srShipment.courier}</span>}
+                                      {srShipment.awb && <span style={{ fontSize: 11, color: '#38bdf8', fontFamily: 'monospace' }}>AWB: {srShipment.awb}</span>}
+                                    </div>
+                                  )}
+                                  {lineItems.map((li, idx) => (
+                                    <div key={idx} style={{ padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)' }}>
+                                      <span>{li.quantity}× {li.title}{li.variant_title ? ` — ${li.variant_title}` : ''}</span>
+                                      <span style={{ color: 'var(--text-main)' }}>{fmt(li.price * li.quantity)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
 
         <button onClick={onClose} className="primary" style={{ width: '100%', marginTop: 20, padding: '12px', fontSize: 14, borderRadius: 10, fontWeight: 600 }}>Close</button>
       </div>

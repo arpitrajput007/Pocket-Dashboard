@@ -534,6 +534,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
           const ad = adCosts[dateStr] || 0;
           const allItems = [];
           const deliveredItems = []; // items from delivered orders only (for the Delivered modal)
+          const deliveredOrders = []; // full orders that are delivered (for the Orders tab in modal)
           let itemsCount = 0; // total UNITS across ALL orders (for CPP and Number of Items card)
           dayOrders.forEach(o => {
             const isCounted = isOrderDelivered(o, shipmentsMap) || isOrderPrepaidRevenue(o);
@@ -547,6 +548,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
               allItems.push({ ...li, sku: li.sku||('TITLE:'+li.title), packSize, orderDate, isDelivered: isCounted, isFulfilled });
               if (isDel) deliveredItems.push({ ...li, packSize, orderDate });
             });
+            if (isDel) deliveredOrders.push(o);
           });
           const pl = calcPL(rev, tCounts['Delivered']||0, ad, tCounts['Fulfilled']||0, allItems, productPricing);
           const pCounts = getPaymentCounts(dayOrders);
@@ -587,7 +589,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                 <MetricCard label="Number of Items" value={itemsCount} glow="white" note="Click to see breakdown" onClick={() => setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems })} />
                 <MetricCard label="CPP" value={itemsCount > 0 ? fmt(cpp) : '₹0'} glow="white" note="Click for product breakdown" />
                 <MetricCard label="Fulfilled" value={tCounts['Fulfilled'] || 0} color="var(--profit-color)" glow="green" active={filterKey === 'fulfilled'} onClick={() => toggleDayFilter(dateStr, 'fulfilled')} />
-                <MetricCard label="Delivered" value={tCounts['Delivered'] || 0} color="var(--profit-color)" glow="green" note="Click to see items" onClick={() => setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems: deliveredItems, mode: 'delivered' })} />
+                <MetricCard label="Delivered" value={tCounts['Delivered'] || 0} color="var(--profit-color)" glow="green" note="Click to see items" onClick={() => setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems: deliveredItems, deliveredOrders, shipmentsMap, mode: 'delivered' })} />
                 <MetricCard label="In Transit" value={tCounts['In Transit'] || 0} color="#60a5fa" glow="blue" active={filterKey === 'in-transit'} onClick={() => toggleDayFilter(dateStr, 'in-transit')} />
                 <MetricCard label="Out for Delivery" value={tCounts['Out for Delivery'] || 0} color="#a78bfa" glow="purple" active={filterKey === 'out-delivery'} onClick={() => toggleDayFilter(dateStr, 'out-delivery')} />
                 <MetricCard label="Failed Delivery" value={tCounts['Failed Delivery'] || 0} color="#f97316" glow="orange" active={filterKey === 'failed-delivery'} onClick={() => toggleDayFilter(dateStr, 'failed-delivery')} />
@@ -701,7 +703,7 @@ export default function DailyDashboard({ store, refreshTrigger }) {
       {modalState.type === 'pnl' && <ProductPNLModal dateStr={modalState.date} prettyDate={modalState.prettyDate} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} adProductBreakdown={adProductBreakdowns[modalState.date]} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'ad' && <AdSpendModal store={store} dateStr={modalState.date} dayOrders={orders.filter(o => getOrderDateIST(o) === modalState.date)} adCosts={adCosts} initialProductBreakdown={adProductBreakdowns[modalState.date]} enabledPlatforms={enabledAdPlatforms} allProducts={allProducts} onSave={handleSaveAdCost} onClose={() => setModalState({ type: null })} />}
       {modalState.type === 'netprofit' && <NetProfitModal dateStr={modalState.date} prettyDate={modalState.prettyDate} pl={modalState.pl} tCounts={modalState.tCounts} pCounts={modalState.pCounts} itemsCount={modalState.itemsCount} cpp={modalState.cpp} totalOrders={modalState.totalOrders} revBreakdown={modalState.revBreakdown} grossSales={modalState.grossSales} allItems={modalState.allItems} productPricing={productPricing} onClose={() => setModalState({ type: null })} />}
-      {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} mode={modalState.mode || 'ordered'} onClose={() => setModalState({ type: null })} />}
+      {modalState.type === 'items' && <ItemsModal prettyDate={modalState.prettyDate} allItems={modalState.allItems} deliveredOrders={modalState.deliveredOrders} shipmentsMap={modalState.shipmentsMap} mode={modalState.mode || 'ordered'} onClose={() => setModalState({ type: null })} />}
     </div>
   );
 }
