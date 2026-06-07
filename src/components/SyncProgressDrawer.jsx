@@ -110,10 +110,16 @@ export default function SyncProgressDrawer({ storeId }) {
   const isCancelled = !!job.cancelled;
   const isError     = !!job.error && !isCancelled;
   const isDone      = !isRunning && !isError && !isCancelled;
-  const typeLabel  = job.type === 'shiprocket' ? 'Shiprocket' : 'Shopify';
-  const elapsed    = job.endedAt
+  const typeLabel   = job.type === 'shiprocket' ? 'Shiprocket' : 'Shopify';
+  const elapsed     = job.endedAt
     ? `${Math.round((new Date(job.endedAt) - new Date(job.startedAt)) / 1000)}s`
     : '';
+  // Badge shown next to title: "First Setup" (full backfill) vs "Incremental"
+  const modeBadge = job.type === 'shiprocket' && job.syncMode
+    ? job.syncMode === 'full'
+      ? { label: 'First Setup', color: 'rgba(251,191,36,1)', bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.3)' }
+      : { label: 'Incremental', color: 'rgba(52,211,153,1)',  bg: 'rgba(52,211,153,0.12)',  border: 'rgba(52,211,153,0.3)' }
+    : null;
 
   const overallPct = job.phases.length === 0 ? 0
     : Math.round(job.phases.reduce((s, p) => s + (p.pct ?? 0), 0) / job.phases.length);
@@ -140,6 +146,15 @@ export default function SyncProgressDrawer({ storeId }) {
             : isCancelled ? `${typeLabel} Sync Stopped`
             :               `${typeLabel} Sync Error`}
           </span>
+          {modeBadge && (
+            <span style={{
+              fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '999px',
+              background: modeBadge.bg, color: modeBadge.color, border: `1px solid ${modeBadge.border}`,
+              letterSpacing: '0.3px', flexShrink: 0,
+            }}>
+              {modeBadge.label}
+            </span>
+          )}
           {isRunning && overallPct > 0 && <span className="sync-header-pct">{overallPct}%</span>}
           {elapsed   && <span className="sync-header-elapsed">{elapsed}</span>}
         </div>
@@ -187,7 +202,9 @@ export default function SyncProgressDrawer({ storeId }) {
           {isDone && job.result && (
             <div className="sync-result">
               ✅ {job.result.totalSynced?.toLocaleString() ?? 0} records synced
-              {job.result.historicalResolved > 0 && ` · ${job.result.historicalResolved} historical lookups`}
+              {job.result.historicalResolved > 0 && ` · ${job.result.historicalResolved} order lookups`}
+              {job.syncMode === 'incremental' && ' · incremental update'}
+              {job.syncMode === 'full' && ' · full backfill complete'}
             </div>
           )}
           {isCancelled && (

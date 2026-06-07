@@ -52,11 +52,16 @@ function jobLog(job, msg) {
 }
 
 function applyProgress(job, event, data) {
-  const { phase, label, detail, resolved, total, count, page } = data || {};
+  const { phase, label, detail, resolved, total, count, page, mode, isFirstSync } = data || {};
   jobLog(job, detail || label || event);
 
+  if (event === 'sync_mode') {
+    // Store the sync mode on the job so the UI can display it
+    job.syncMode = mode;        // 'full' | 'incremental'
+    job.isFirstSync = !!isFirstSync;
+    return;
+  }
   if (event === 'phase_start') {
-    // Upsert phase entry
     const existing = job.phases.find(p => p.id === phase);
     if (existing) { existing.status = 'running'; existing.detail = detail || ''; }
     else job.phases.push({ id: phase, label: label || `Phase ${phase}`, status: 'running', detail: detail || '', pct: 0 });
@@ -65,7 +70,7 @@ function applyProgress(job, event, data) {
     if (p) {
       p.detail = detail || p.detail;
       if (resolved !== undefined && total) p.pct = Math.round((resolved / total) * 100);
-      if (count !== undefined && page) p.pct = Math.min(95, page * 6); // rough estimate
+      else if (count !== undefined && page) p.pct = Math.min(95, page * 6);
     }
   } else if (event === 'phase_done') {
     const p = job.phases.find(p => p.id === phase);
@@ -1080,11 +1085,13 @@ app.post('/api/shiprocket/sync/:storeId', async (req, res) => {
     return res.json({ status: 'already_running', storeId });
   }
 
+  const forceFullSync = req.body?.forceFullSync === true;
   const { job, signal } = startJob(storeId, 'shiprocket');
-  jobLog(job, 'Shiprocket sync started');
-  res.json({ status: 'sync_started', storeId });  // respond immediately
+  jobLog(job, forceFullSync ? 'Full re-sync started (reset)' : 'Shiprocket sync started');
+  res.json({ status: 'sync_started', storeId, forceFullSync });  // respond immediately
 
   syncShiprocketShipments(storeId, {
+    forceFullSync,
     onProgress: (event, data) => applyProgress(job, event, data),
     signal,
   }).then(result => {
@@ -1109,6 +1116,47 @@ app.post('/api/shiprocket/sync/:storeId', async (req, res) => {
     syncAbortControllers.delete(storeId);
     console.error(`[Shiprocket API] Sync ended for ${storeId}: ${err.message}`);
   });
+});
+
+/**
+ * POST /api/shiprocket/reset/:storeId
+ * Wipes all Shiprocket shipment data for a store and clears shipments_synced_at.
+ * The next sync will run as a full backfill from scratch.
+ */
+app.post('/api/shiprocket/reset/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  if (!storeId) return res.status(400).json({ error: 'storeId is required' });
+
+  // Block reset while a sync is running
+  const existing = syncJobs.get(storeId);
+  if (existing?.running) {
+    return res.status(409).json({ error: 'A sync is already running — stop it before resetting' });
+  }
+
+  try {
+    // Delete all Shiprocket shipments for this store
+    const { error: delErr } = await supabase
+      .from('shipments')
+      .delete()
+      .eq('store_id', storeId)
+      .eq('source', 'shiprocket');
+
+    if (delErr) throw new Error(`Delete failed: ${delErr.message}`);
+
+    // Clear the last-synced timestamp so the next sync acts as a first sync
+    const { error: updErr } = await supabase
+      .from('stores')
+      .update({ shipments_synced_at: null })
+      .eq('id', storeId);
+
+    if (updErr) throw new Error(`Store update failed: ${updErr.message}`);
+
+    console.log(`[Shiprocket] 🗑 Reset complete for store ${storeId}`);
+    res.json({ status: 'reset_complete', storeId });
+  } catch (err) {
+    console.error(`[Shiprocket] Reset error for ${storeId}: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /**

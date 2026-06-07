@@ -196,8 +196,9 @@ export default function AdvancedSettings({ store }) {
   const [srPassword, setSrPassword] = useState('');
   const [srFromDate, setSrFromDate] = useState('');   // YYYY-MM-DD
   const [srFromPreset, setSrFromPreset] = useState('store_start'); // preset key
-  const [srBusy, setSrBusy] = useState(false);      // connecting
+  const [srBusy, setSrBusy] = useState(false);        // connecting
   const [srSyncing, setSrSyncing] = useState(false);
+  const [srResetting, setSrResetting] = useState(false);
   const [srError, setSrError] = useState(null);
 
   const loadShiprocketStatus = async () => {
@@ -300,6 +301,49 @@ export default function AdvancedSettings({ store }) {
       setSrError(err.message);
     } finally {
       setSrBusy(false);
+    }
+  };
+
+  const handleShiprocketReset = async () => {
+    if (!window.confirm(
+      '⚠️ Reset Sync?\n\nThis will delete all ' + (srStatus.shipmentCount || 0).toLocaleString() +
+      ' synced shipments and run a full re-sync from scratch.\n\nThis may take 5–10 minutes. Continue?'
+    )) return;
+
+    setSrResetting(true);
+    setSrError(null);
+    try {
+      // Step 1: wipe existing data
+      const resetRes = await fetch(`${API_URL}/api/shiprocket/reset/${store.id}`, { method: 'POST' });
+      const resetBody = await resetRes.json().catch(() => ({}));
+      if (!resetRes.ok) throw new Error(resetBody.error || 'Reset failed');
+
+      // Step 2: immediately kick off a full re-sync
+      const syncRes = await fetch(`${API_URL}/api/shiprocket/sync/${store.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ forceFullSync: true }),
+      });
+      const syncBody = await syncRes.json().catch(() => ({}));
+      if (!syncRes.ok) throw new Error(syncBody.error || 'Sync failed after reset');
+
+      setSrSyncing(true);
+      // Poll until done
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(`${API_URL}/api/sync-progress/${store.id}`);
+          const d = await r.json().catch(() => ({}));
+          if (!d.running) {
+            clearInterval(poll);
+            setSrSyncing(false);
+            loadShiprocketStatus();
+          }
+        } catch(_) { clearInterval(poll); setSrSyncing(false); }
+      }, 2500);
+    } catch (err) {
+      setSrError(err.message);
+    } finally {
+      setSrResetting(false);
     }
   };
 
@@ -666,7 +710,25 @@ export default function AdvancedSettings({ store }) {
                       : <><RefreshCw size={14} /> Sync Now</>
                     }
                   </button>
-                  <button onClick={handleShiprocketDisconnect} disabled={srBusy} style={{ padding: '9px 16px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>Disconnect</button>
+                  <button
+                    onClick={handleShiprocketReset}
+                    disabled={srSyncing || srResetting || srBusy}
+                    title="Wipe all synced data and re-sync from scratch"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '9px 16px', borderRadius: '10px',
+                      background: srResetting ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${srResetting ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                      color: srResetting ? 'rgba(248,113,113,0.9)' : 'rgba(255,255,255,0.4)',
+                      fontWeight: 600, fontSize: '13px',
+                      cursor: (srSyncing || srResetting || srBusy) ? 'not-allowed' : 'pointer',
+                      fontFamily: 'Outfit, sans-serif', opacity: (srSyncing || srBusy) ? 0.4 : 1,
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    {srResetting ? '⟳ Resetting…' : '↺ Reset Sync'}
+                  </button>
+                  <button onClick={handleShiprocketDisconnect} disabled={srBusy || srSyncing} style={{ padding: '9px 16px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px', cursor: (srBusy || srSyncing) ? 'not-allowed' : 'pointer', fontFamily: 'Outfit, sans-serif', opacity: srSyncing ? 0.4 : 1 }}>Disconnect</button>
                 </>
               ) : (
                 <button onClick={() => { setSrError(null); setSrFromPreset(store?.dashboard_features?.sync_from_date ? 'store_start' : '90d'); setSrModalOpen(true); }} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 18px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, rgba(124,58,237,1), rgba(167,139,250,1))', color: '#fff', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>
