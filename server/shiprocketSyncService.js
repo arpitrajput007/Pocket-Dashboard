@@ -335,50 +335,33 @@ async function probeShiprocket(storeId) {
   const from2y = srFmt(Date.now() - 730 * 864e5);
   const toTomorrow = srFmt(Date.now() + 864e5);
 
-  // 1) Dump ALL field names from /shipments page 1 so we can see the exact structure
-  let shipmentFieldsRaw = null;
-  try {
-    const r = await fetch(`${SR_BASE}/shipments?per_page=5&page=1`, { headers: { Authorization: `Bearer ${token}` } });
-    const b = await r.json().catch(() => ({}));
-    const first = (Array.isArray(b.data) ? b.data : [])[0] || null;
-    shipmentFieldsRaw = first ? Object.fromEntries(
-      Object.entries(first).map(([k,v]) => [k, Array.isArray(v) ? `[array len=${v.length}]` : typeof v === 'object' && v ? `{keys:${Object.keys(v).join(',')}}` : v])
-    ) : null;
-  } catch(e) { shipmentFieldsRaw = { error: e.message }; }
-  await sleep(600);
-
-  // 2) Test /orders vs /shipments for total counts and pagination shape
-  const endpoints = {
-    orders_no_date:      { base: 'orders',    qs: `per_page=100&page=1&sort=DESC&sort_by=created_at` },
-    orders_2y:           { base: 'orders',    qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}` },
-    shipments_no_date:   { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at` },
-    shipments_2y:        { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}` },
+  // Test /orders with filter_by status codes to find delivered/RTO orders
+  // Shiprocket status codes: 1=New, 2=Pending, 3=Manifested, 4=Shipped,
+  // 5=Delivered, 6=Cancelled, 7=RTO, 8=Return Manifest, 9=RTO Delivered, 10=Lost
+  // The default /orders endpoint only returns ~472 active orders.
+  // If filter_by works for delivered/RTO, we can paginate all historical orders.
+  const variants = {
+    orders_default:        `per_page=100&page=1&sort=DESC&sort_by=created_at`,
+    orders_filter_del_5:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=5`,
+    orders_filter_rto_7:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=7`,
+    orders_filter_rto_9:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=9`,
+    orders_filter_can_6:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=6`,
+    orders_filter_del_rto: `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=5&filter_by[]=7&filter_by[]=9`,
   };
 
-  const results = { shipmentFieldsRaw };
-  for (const [label, { base, qs }] of Object.entries(endpoints)) {
+  const results = {};
+  for (const [label, qs] of Object.entries(variants)) {
     try {
-      const res = await fetch(`${SR_BASE}/${base}?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${SR_BASE}/orders?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json().catch(() => ({}));
       const data = Array.isArray(body.data) ? body.data : [];
-      const dates = data.map(o => (o.created_at || '').slice(0, 10)).filter(Boolean);
-      // Show every possible ID field on first 3 records so we can spot the Shopify order name
-      const sampleIds = data.slice(0, 3).map(o => ({
-        channel_order_id: o.channel_order_id,
-        channel_id: o.channel_id,
-        order_id: o.order_id,
-        id: o.id,
-        awb_code: o.awb_code,
-        status: o.status,
-      }));
+      const sampleStatuses = data.slice(0, 5).map(o => ({ channel_order_id: o.channel_order_id, status: o.status }));
       results[label] = {
-        endpoint: `/${base}`,
         status: res.status,
+        total: body.meta?.pagination?.total || null,
+        total_pages: body.meta?.pagination?.total_pages || null,
         returned: data.length,
-        pagination: body.meta?.pagination || body.pagination || null,
-        newestDate: dates[0] || null,
-        oldestOnPage: dates[dates.length - 1] || null,
-        sampleIds,
+        sampleStatuses,
         message: body.message || null,
       };
     } catch (e) {
