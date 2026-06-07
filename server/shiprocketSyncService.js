@@ -335,41 +335,64 @@ async function probeShiprocket(storeId) {
   const from2y = srFmt(Date.now() - 730 * 864e5);
   const toTomorrow = srFmt(Date.now() + 864e5);
 
-  // Test /orders with filter_by status codes to find delivered/RTO orders
-  // Shiprocket status codes: 1=New, 2=Pending, 3=Manifested, 4=Shipped,
-  // 5=Delivered, 6=Cancelled, 7=RTO, 8=Return Manifest, 9=RTO Delivered, 10=Lost
-  // The default /orders endpoint only returns ~472 active orders.
-  // If filter_by works for delivered/RTO, we can paginate all historical orders.
-  const variants = {
-    orders_default:        `per_page=100&page=1&sort=DESC&sort_by=created_at`,
-    orders_filter_del_5:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=5`,
-    orders_filter_rto_7:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=7`,
-    orders_filter_rto_9:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=9`,
-    orders_filter_can_6:   `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=6`,
-    orders_filter_del_rto: `per_page=100&page=1&sort=DESC&sort_by=created_at&filter_by[]=5&filter_by[]=7&filter_by[]=9`,
-  };
+  // 1) Get a sample order_id from /shipments to test single-order lookup
+  let sampleOrderId = null;
+  try {
+    const r = await fetch(`${SR_BASE}/shipments?per_page=5&page=1`, { headers: { Authorization: `Bearer ${token}` } });
+    const b = await r.json().catch(() => ({}));
+    sampleOrderId = (Array.isArray(b.data) ? b.data : [])[0]?.order_id || null;
+  } catch(e) {}
+  await sleep(500);
 
-  const results = {};
-  for (const [label, qs] of Object.entries(variants)) {
+  // 2) Test single order lookup — does /orders/show/{id} return channel_order_id for old orders?
+  let singleOrderTest = null;
+  if (sampleOrderId) {
     try {
-      const res = await fetch(`${SR_BASE}/orders?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json().catch(() => ({}));
-      const data = Array.isArray(body.data) ? body.data : [];
-      const sampleStatuses = data.slice(0, 5).map(o => ({ channel_order_id: o.channel_order_id, status: o.status }));
-      results[label] = {
-        status: res.status,
-        total: body.meta?.pagination?.total || null,
-        total_pages: body.meta?.pagination?.total_pages || null,
-        returned: data.length,
-        sampleStatuses,
-        message: body.message || null,
+      const r = await fetch(`${SR_BASE}/orders/show/${sampleOrderId}`, { headers: { Authorization: `Bearer ${token}` } });
+      const b = await r.json().catch(() => ({}));
+      const order = b.data || b;
+      singleOrderTest = {
+        status: r.status,
+        order_id_queried: sampleOrderId,
+        channel_order_id: order.channel_order_id || order.data?.channel_order_id || null,
+        order_status: order.status || null,
+        all_keys: Object.keys(order).slice(0, 20),
+        message: b.message || null,
       };
-    } catch (e) {
-      results[label] = { error: e.message };
-    }
-    await sleep(600);
+    } catch(e) { singleOrderTest = { error: e.message }; }
   }
-  return { storeId, probedAt: new Date().toISOString(), results };
+  await sleep(500);
+
+  // 3) How many pages does /shipments actually have? Follow next links to count.
+  let shipmentsPageCount = 0;
+  let shipmentsTotalItems = 0;
+  let nextUrl = `${SR_BASE}/shipments?per_page=100&page=1`;
+  while (nextUrl && shipmentsPageCount < 30) {
+    try {
+      const r = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
+      const b = await r.json().catch(() => ({}));
+      const data = Array.isArray(b.data) ? b.data : [];
+      shipmentsPageCount++;
+      shipmentsTotalItems += data.length;
+      nextUrl = b.meta?.pagination?.links?.next || null;
+      if (data.length < 100) break;
+    } catch(e) { break; }
+    await sleep(300);
+  }
+
+  return {
+    storeId,
+    probedAt: new Date().toISOString(),
+    results: {
+      sampleShipmentOrderId: sampleOrderId,
+      singleOrderLookup: singleOrderTest,
+      shipmentsPagination: {
+        pagesScanned: shipmentsPageCount,
+        totalItemsCounted: shipmentsTotalItems,
+        note: shipmentsPageCount >= 30 ? 'stopped at 30 pages' : 'reached end',
+      },
+    },
+  };
 }
 
 module.exports = {
