@@ -38,10 +38,17 @@ function PhaseRow({ phase }) {
   );
 }
 
+async function cancelSync(storeId) {
+  try {
+    await fetch(`${API_URL}/api/sync-cancel/${storeId}`, { method: 'POST' });
+  } catch(_) {}
+}
+
 export default function SyncProgressDrawer({ storeId }) {
   const [job, setJob]         = useState(null);
   const [open, setOpen]       = useState(false);
   const [minimized, setMin]   = useState(false);
+  const [stopping, setStopping] = useState(false);
   const logsEndRef            = useRef(null);
   const lingerTimer           = useRef(null);
   const pollRef               = useRef(null);
@@ -99,9 +106,10 @@ export default function SyncProgressDrawer({ storeId }) {
 
   if (!open || !job) return null;
 
-  const isRunning  = job.running;
-  const isError    = !!job.error;
-  const isDone     = !isRunning && !isError;
+  const isRunning   = job.running;
+  const isCancelled = !!job.cancelled;
+  const isError     = !!job.error && !isCancelled;
+  const isDone      = !isRunning && !isError && !isCancelled;
   const typeLabel  = job.type === 'shiprocket' ? 'Shiprocket' : 'Shopify';
   const elapsed    = job.endedAt
     ? `${Math.round((new Date(job.endedAt) - new Date(job.startedAt)) / 1000)}s`
@@ -110,21 +118,43 @@ export default function SyncProgressDrawer({ storeId }) {
   const overallPct = job.phases.length === 0 ? 0
     : Math.round(job.phases.reduce((s, p) => s + (p.pct ?? 0), 0) / job.phases.length);
 
+  const handleStop = async (e) => {
+    e.stopPropagation();
+    setStopping(true);
+    await cancelSync(storeId);
+    setStopping(false);
+  };
+
   return (
-    <div className={`sync-drawer ${minimized ? 'minimized' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''}`}>
+    <div className={`sync-drawer ${minimized ? 'minimized' : ''} ${isDone ? 'done' : ''} ${isError ? 'error' : ''} ${isCancelled ? 'cancelled' : ''}`}>
       {/* Header */}
       <div className="sync-drawer-header" onClick={() => setMin(m => !m)}>
         <div className="sync-drawer-title">
-          {isRunning && <span className="sync-spinner" />}
-          {isDone    && <span className="sync-done-dot" />}
-          {isError   && <span className="sync-error-dot" />}
+          {isRunning   && <span className="sync-spinner" />}
+          {isDone      && <span className="sync-done-dot" />}
+          {isError     && <span className="sync-error-dot" />}
+          {isCancelled && <span className="sync-cancel-dot" />}
           <span>
-            {isRunning ? `Syncing ${typeLabel}…` : isDone ? `${typeLabel} Sync Complete` : `${typeLabel} Sync Error`}
+            {isRunning   ? `Syncing ${typeLabel}…`
+            : isDone      ? `${typeLabel} Sync Complete`
+            : isCancelled ? `${typeLabel} Sync Stopped`
+            :               `${typeLabel} Sync Error`}
           </span>
           {isRunning && overallPct > 0 && <span className="sync-header-pct">{overallPct}%</span>}
           {elapsed   && <span className="sync-header-elapsed">{elapsed}</span>}
         </div>
         <div className="sync-drawer-actions">
+          {/* Stop button — only while running */}
+          {isRunning && (
+            <button
+              className="sync-stop-btn"
+              onClick={handleStop}
+              disabled={stopping}
+              title="Stop sync"
+            >
+              {stopping ? '…' : '⏹ Stop'}
+            </button>
+          )}
           <button className="sync-action-btn" onClick={e => { e.stopPropagation(); setMin(m => !m); }}
             title={minimized ? 'Expand' : 'Minimise'}>
             {minimized ? '▲' : '▼'}
@@ -159,6 +189,9 @@ export default function SyncProgressDrawer({ storeId }) {
               ✅ {job.result.totalSynced?.toLocaleString() ?? 0} records synced
               {job.result.historicalResolved > 0 && ` · ${job.result.historicalResolved} historical lookups`}
             </div>
+          )}
+          {isCancelled && (
+            <div className="sync-result cancelled">🛑 Sync stopped — partial data may have been saved</div>
           )}
           {isError && (
             <div className="sync-result error">❌ {job.error}</div>

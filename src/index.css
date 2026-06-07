@@ -3151,3 +3151,21 @@ tbody tr:hover { background: rgba(255,255,255,0.02); }
 }
 .sync-log-time { color: var(--text-dim); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .sync-log-msg  { color: var(--text-muted); }
+
+/* Sync drawer — stop button & cancelled state */
+.sync-stop-btn {
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.4);
+  color: rgba(248,113,113,1);
+  font-size: 12px; font-weight: 700;
+  padding: 5px 10px; border-radius: 8px;
+  cursor: pointer; transition: all 0.15s;
+  font-family: inherit;
+}
+.sync-stop-btn:hover:not(:disabled) { background: rgba(239,68,68,0.25); border-color: rgba(239,68,68,0.6); }
+.sync-stop-btn:disabled { opacity: 0.5; cursor: default; }
+
+.sync-drawer.cancelled { border-color: rgba(251,146,60,0.35); }
+.sync-cancel-dot { width: 10px; height: 10px; border-radius: 50%; background: #f97316; flex-shrink: 0; }
+.sync-result.cancelled { background: rgba(251,146,60,0.08); border-color: rgba(251,146,60,0.25); color: #fb923c; }

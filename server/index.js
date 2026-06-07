@@ -21,7 +21,16 @@ const PORT = process.env.PORT || 3001;
 // Entries are kept for 10 minutes after completion then pruned.
 const syncJobs = new Map();
 
+// AbortControllers — one per store, cancelled via /api/sync-cancel/:storeId
+const syncAbortControllers = new Map();
+
 function startJob(storeId, type) {
+  // Cancel any existing run first
+  const prev = syncAbortControllers.get(storeId);
+  if (prev) { try { prev.abort(); } catch(_) {} }
+  const controller = new AbortController();
+  syncAbortControllers.set(storeId, controller);
+
   const job = {
     running: true,
     type,                   // 'shopify' | 'shiprocket'
@@ -31,9 +40,10 @@ function startJob(storeId, type) {
     logs:  [],              // [{time, msg}]  — last 80 lines
     result: null,
     error: null,
+    cancelled: false,
   };
   syncJobs.set(storeId, job);
-  return job;
+  return { job, signal: controller.signal };
 }
 
 function jobLog(job, msg) {
@@ -517,7 +527,7 @@ app.post('/api/sync/:storeId', async (req, res) => {
     return res.json({ status: 'already_running', storeId });
   }
 
-  const job = startJob(storeId, 'shopify');
+  const { job } = startJob(storeId, 'shopify');
   job.phases = [
     { id: 1, label: 'Fetching orders from Shopify', status: 'running', detail: 'Connecting…', pct: 0 },
     { id: 2, label: 'Saving to database',            status: 'pending', detail: '',            pct: 0 },
@@ -533,6 +543,7 @@ app.post('/api/sync/:storeId', async (req, res) => {
     job.phases[0].detail = `${result.totalSynced} orders fetched`;
     job.phases[1].detail = `${result.totalSynced} orders saved`;
     jobLog(job, `✅ Done — ${result.totalSynced} orders synced (${result.mode})`);
+    syncAbortControllers.delete(storeId);
     console.log(`[Sync API] ✅ Completed for ${storeId}:`, result);
   }).catch(err => {
     job.running = false;
@@ -540,6 +551,7 @@ app.post('/api/sync/:storeId', async (req, res) => {
     job.error   = err.message;
     job.phases.forEach(p => { if (p.status === 'running') p.status = 'error'; });
     jobLog(job, `❌ Error: ${err.message}`);
+    syncAbortControllers.delete(storeId);
     console.error(`[Sync API] ❌ Failed for ${storeId}:`, err.message);
   });
 });
@@ -1032,6 +1044,29 @@ app.get('/api/sync-progress/:storeId', (req, res) => {
 });
 
 /**
+ * POST /api/sync-cancel/:storeId
+ * Stops any in-progress sync immediately via AbortController.
+ */
+app.post('/api/sync-cancel/:storeId', (req, res) => {
+  const { storeId } = req.params;
+  const controller = syncAbortControllers.get(storeId);
+  if (controller) {
+    controller.abort();
+    syncAbortControllers.delete(storeId);
+  }
+  const job = syncJobs.get(storeId);
+  if (job && job.running) {
+    job.running   = false;
+    job.endedAt   = new Date().toISOString();
+    job.cancelled = true;
+    job.error     = 'Sync stopped by user';
+    job.phases.forEach(p => { if (p.status === 'running') p.status = 'skipped'; });
+    jobLog(job, '🛑 Sync stopped by user');
+  }
+  res.json({ status: 'cancelled', storeId });
+});
+
+/**
  * POST /api/shiprocket/sync/:storeId
  * Starts Shiprocket sync in background, returns immediately.
  * Poll GET /api/sync-progress/:storeId for live status.
@@ -1045,26 +1080,34 @@ app.post('/api/shiprocket/sync/:storeId', async (req, res) => {
     return res.json({ status: 'already_running', storeId });
   }
 
-  const job = startJob(storeId, 'shiprocket');
+  const { job, signal } = startJob(storeId, 'shiprocket');
   jobLog(job, 'Shiprocket sync started');
   res.json({ status: 'sync_started', storeId });  // respond immediately
 
   syncShiprocketShipments(storeId, {
     onProgress: (event, data) => applyProgress(job, event, data),
+    signal,
   }).then(result => {
     job.running = false;
     job.endedAt = new Date().toISOString();
     job.result  = result;
     jobLog(job, `✅ Done — ${result.totalSynced} shipments synced`);
+    syncAbortControllers.delete(storeId);
     console.log(`[Shiprocket API] ✅ Sync complete for ${storeId}:`, result);
   }).catch(err => {
     job.running = false;
     job.endedAt = new Date().toISOString();
-    job.error   = err.message;
-    jobLog(job, `❌ Error: ${err.message}`);
-    // Mark any running phases as error
-    job.phases.forEach(p => { if (p.status === 'running') p.status = 'error'; });
-    console.error(`[Shiprocket API] ❌ Sync failed for ${storeId}:`, err.message);
+    job.phases.forEach(p => { if (p.status === 'running') p.status = err.name === 'AbortError' ? 'skipped' : 'error'; });
+    if (err.name === 'AbortError') {
+      job.cancelled = true;
+      job.error = 'Sync stopped by user';
+      jobLog(job, '🛑 Sync stopped by user');
+    } else {
+      job.error = err.message;
+      jobLog(job, `❌ Error: ${err.message}`);
+    }
+    syncAbortControllers.delete(storeId);
+    console.error(`[Shiprocket API] Sync ended for ${storeId}: ${err.message}`);
   });
 });
 

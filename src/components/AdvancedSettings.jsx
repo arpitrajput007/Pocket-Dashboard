@@ -257,18 +257,35 @@ export default function AdvancedSettings({ store }) {
   };
 
   const handleShiprocketSync = async () => {
+    // If already syncing — stop it
+    if (srSyncing) {
+      try {
+        await fetch(`${API_URL}/api/sync-cancel/${store.id}`, { method: 'POST' });
+      } catch(_) {}
+      setSrSyncing(false);
+      return;
+    }
+
     setSrSyncing(true);
     setSrError(null);
     try {
       const res = await fetch(`${API_URL}/api/shiprocket/sync/${store.id}`, { method: 'POST' });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Sync failed (status ${res.status})`);
-      // Sync now runs in background — progress shown in the drawer.
-      // Poll for updated count after a short delay.
-      setTimeout(() => loadShiprocketStatus(), 5000);
+      // Sync runs in background — poll until done, then refresh count
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(`${API_URL}/api/sync-progress/${store.id}`);
+          const d = await r.json().catch(() => ({}));
+          if (!d.running) {
+            clearInterval(poll);
+            setSrSyncing(false);
+            loadShiprocketStatus();
+          }
+        } catch(_) { clearInterval(poll); setSrSyncing(false); }
+      }, 2500);
     } catch (err) {
       setSrError(err.message);
-    } finally {
       setSrSyncing(false);
     }
   };
@@ -631,9 +648,23 @@ export default function AdvancedSettings({ store }) {
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {srStatus.connected ? (
                 <>
-                  <button onClick={handleShiprocketSync} disabled={srSyncing} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 16px', borderRadius: '10px', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.3)', color: 'rgba(167,139,250,1)', fontWeight: 600, fontSize: '13px', cursor: srSyncing ? 'default' : 'pointer', fontFamily: 'Outfit, sans-serif', opacity: srSyncing ? 0.6 : 1 }}>
-                    <RefreshCw size={14} style={srSyncing ? { animation: 'spin 0.8s linear infinite' } : undefined} />
-                    {srSyncing ? 'Syncing…' : 'Sync Now'}
+                  <button
+                    onClick={handleShiprocketSync}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '7px',
+                      padding: '9px 16px', borderRadius: '10px',
+                      background: srSyncing ? 'rgba(239,68,68,0.15)' : 'rgba(167,139,250,0.12)',
+                      border: `1px solid ${srSyncing ? 'rgba(239,68,68,0.5)' : 'rgba(167,139,250,0.3)'}`,
+                      color: srSyncing ? 'rgba(248,113,113,1)' : 'rgba(167,139,250,1)',
+                      fontWeight: 600, fontSize: '13px', cursor: 'pointer',
+                      fontFamily: 'Outfit, sans-serif',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    {srSyncing
+                      ? <><span style={{ fontSize: '14px' }}>⏹</span> Stop Sync</>
+                      : <><RefreshCw size={14} /> Sync Now</>
+                    }
                   </button>
                   <button onClick={handleShiprocketDisconnect} disabled={srBusy} style={{ padding: '9px 16px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '13px', cursor: 'pointer', fontFamily: 'Outfit, sans-serif' }}>Disconnect</button>
                 </>

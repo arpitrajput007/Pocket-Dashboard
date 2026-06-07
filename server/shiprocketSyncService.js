@@ -181,8 +181,10 @@ function parseSrDate(str) {
  * On first run ~1000 individual lookups take ~5 min. Subsequent runs are fast
  * because most order_ids will already be in the DB.
  */
-async function syncShiprocketShipments(storeId, { fromDateOverride = null, onProgress = null } = {}) {
+async function syncShiprocketShipments(storeId, { fromDateOverride = null, onProgress = null, signal = null } = {}) {
   const emit = (event, data = {}) => { try { if (onProgress) onProgress(event, data); } catch(e) {} };
+  // Helper: throw if the caller has requested cancellation
+  const checkAbort = () => { if (signal?.aborted) throw Object.assign(new Error('Sync cancelled by user'), { name: 'AbortError' }); };
   console.log(`[Shiprocket] ▶ Starting sync for store: ${storeId}`);
 
   const { data: store, error } = await supabase
@@ -213,6 +215,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null, onPro
   emit('phase_start', { phase: 1, label: 'Fetching active orders' });
   console.log('[Shiprocket] Phase 1: fetching active orders...');
   while (ordPage <= ordTotalPages && ordPage <= 20) {
+    checkAbort();
     let body;
     try {
       body = await srFetch(
@@ -244,6 +247,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null, onPro
   emit('phase_start', { phase: 2, label: 'Fetching all shipments' });
   console.log('[Shiprocket] Phase 2: fetching all shipments...');
   while (nextUrl && shipPageCount < 300) {
+    checkAbort();
     let body;
     try {
       body = await srFetch(nextUrl, getToken);
@@ -298,6 +302,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null, onPro
   console.log(`[Shiprocket] Phase 3: ${unknownIds.length} unknown order_ids to look up individually...`);
   let resolved = 0;
   for (let i = 0; i < unknownIds.length; i++) {
+    checkAbort();
     const orderId = unknownIds[i];
     try {
       const body = await srFetch(`${SR_BASE}/orders/show/${orderId}`, getToken);
@@ -325,6 +330,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null, onPro
   emit('phase_start', { phase: 4, label: 'Saving to database', detail: `Writing ${allShipments.length} records` });
   console.log(`[Shiprocket] Phase 4: upserting ${allShipments.length} rows...`);
   for (let i = 0; i < allShipments.length; i += BATCH) {
+    checkAbort();
     const batch = allShipments.slice(i, i + BATCH);
     const rows = batch.map(s => {
       const orderId = String(s.order_id);
