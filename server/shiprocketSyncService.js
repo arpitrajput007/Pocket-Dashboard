@@ -181,7 +181,8 @@ function parseSrDate(str) {
  * On first run ~1000 individual lookups take ~5 min. Subsequent runs are fast
  * because most order_ids will already be in the DB.
  */
-async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}) {
+async function syncShiprocketShipments(storeId, { fromDateOverride = null, onProgress = null } = {}) {
+  const emit = (event, data = {}) => { try { if (onProgress) onProgress(event, data); } catch(e) {} };
   console.log(`[Shiprocket] ▶ Starting sync for store: ${storeId}`);
 
   const { data: store, error } = await supabase
@@ -207,9 +208,9 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
   // ──────────────────────────────────────────────────────────────
   // PHASE 1: active orders from /orders — has channel_order_id
   // ──────────────────────────────────────────────────────────────
-  // orderMap: shiprocket_order_id (string) → { channel_order_id, status }
   const orderMap = new Map();
   let ordPage = 1, ordTotalPages = 1;
+  emit('phase_start', { phase: 1, label: 'Fetching active orders' });
   console.log('[Shiprocket] Phase 1: fetching active orders...');
   while (ordPage <= ordTotalPages && ordPage <= 20) {
     let body;
@@ -231,6 +232,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
     await sleep(200);
   }
   console.log(`[Shiprocket] Phase 1 ✓ ${orderMap.size} active orders`);
+  emit('phase_done', { phase: 1, label: 'Active orders fetched', detail: `${orderMap.size} active orders` });
 
   // ──────────────────────────────────────────────────────────────
   // PHASE 2: ALL shipments from /shipments (follow next w/ HTTPS)
@@ -239,6 +241,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
   const allShipments = [];
   let nextUrl = forceHttps(`${SR_BASE}/shipments?per_page=100&page=1&sort=DESC&sort_by=created_at`);
   let shipPageCount = 0;
+  emit('phase_start', { phase: 2, label: 'Fetching all shipments' });
   console.log('[Shiprocket] Phase 2: fetching all shipments...');
   while (nextUrl && shipPageCount < 300) {
     let body;
@@ -253,11 +256,15 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
     shipPageCount++;
     const rawNext = body.meta?.pagination?.links?.next || null;
     nextUrl = rawNext ? forceHttps(rawNext) : null;
-    if (shipPageCount % 5 === 0) console.log(`[Shiprocket] Phase 2: page ${shipPageCount}, ${allShipments.length} so far...`);
+    if (shipPageCount % 5 === 0) {
+      console.log(`[Shiprocket] Phase 2: page ${shipPageCount}, ${allShipments.length} so far...`);
+      emit('phase_progress', { phase: 2, count: allShipments.length, page: shipPageCount, detail: `Page ${shipPageCount} · ${allShipments.length} shipments` });
+    }
     if (data.length < 100) break;
     await sleep(200);
   }
   console.log(`[Shiprocket] Phase 2 ✓ ${allShipments.length} shipments across ${shipPageCount} pages`);
+  emit('phase_done', { phase: 2, label: 'All shipments fetched', detail: `${allShipments.length} shipments · ${shipPageCount} pages` });
 
   // ──────────────────────────────────────────────────────────────
   // PHASE 3: resolve channel_order_id for historical order_ids
@@ -286,9 +293,12 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
       .filter(id => id && id !== 'null' && id !== 'undefined' && !orderMap.has(id))
   )];
 
+  emit('phase_start', { phase: 3, label: 'Resolving historical orders', total: unknownIds.length,
+    detail: unknownIds.length === 0 ? 'All orders already known' : `Looking up ${unknownIds.length} orders` });
   console.log(`[Shiprocket] Phase 3: ${unknownIds.length} unknown order_ids to look up individually...`);
   let resolved = 0;
-  for (const orderId of unknownIds) {
+  for (let i = 0; i < unknownIds.length; i++) {
+    const orderId = unknownIds[i];
     try {
       const body = await srFetch(`${SR_BASE}/orders/show/${orderId}`, getToken);
       const order = body.data || body;
@@ -297,18 +307,22 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
         resolved++;
       }
     } catch(e) { /* order may no longer be accessible — skip */ }
-    await sleep(250); // ~4 req/sec — gentle on rate limits
-    if (resolved % 50 === 0 && resolved > 0) {
+    await sleep(250);
+    if ((i + 1) % 50 === 0 || i === unknownIds.length - 1) {
       console.log(`[Shiprocket] Phase 3: resolved ${resolved}/${unknownIds.length}...`);
+      emit('phase_progress', { phase: 3, resolved, total: unknownIds.length,
+        detail: `${resolved}/${unknownIds.length} orders resolved` });
     }
   }
   console.log(`[Shiprocket] Phase 3 ✓ resolved ${resolved}/${unknownIds.length} historical orders`);
+  emit('phase_done', { phase: 3, label: 'Historical orders resolved', detail: `${resolved}/${unknownIds.length} resolved` });
 
   // ──────────────────────────────────────────────────────────────
   // PHASE 4: upsert all shipments to DB in batches
   // ──────────────────────────────────────────────────────────────
   let totalUpserted = 0, failedBatches = 0;
   const BATCH = 50;
+  emit('phase_start', { phase: 4, label: 'Saving to database', detail: `Writing ${allShipments.length} records` });
   console.log(`[Shiprocket] Phase 4: upserting ${allShipments.length} rows...`);
   for (let i = 0; i < allShipments.length; i += BATCH) {
     const batch = allShipments.slice(i, i + BATCH);
@@ -347,6 +361,7 @@ async function syncShiprocketShipments(storeId, { fromDateOverride = null } = {}
     .update({ shipments_synced_at: new Date().toISOString() })
     .eq('id', storeId);
 
+  emit('phase_done', { phase: 4, label: 'Database updated', detail: `${totalUpserted} records saved` });
   console.log(`[Shiprocket] ✅ Done. ${totalUpserted}/${allShipments.length} upserted, ${resolved} historical lookups, ${failedBatches} failed batches`);
   return { success: true, totalSynced: totalUpserted, historicalResolved: resolved, failedBatches };
 }

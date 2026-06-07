@@ -16,6 +16,65 @@ const supabase = createClient(VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ─── In-memory sync job tracker ───────────────────────────────────────────────
+// Keeps the latest sync state per storeId so the UI can poll for live progress.
+// Entries are kept for 10 minutes after completion then pruned.
+const syncJobs = new Map();
+
+function startJob(storeId, type) {
+  const job = {
+    running: true,
+    type,                   // 'shopify' | 'shiprocket'
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+    phases: [],             // [{id, label, status, detail, pct}]
+    logs:  [],              // [{time, msg}]  — last 80 lines
+    result: null,
+    error: null,
+  };
+  syncJobs.set(storeId, job);
+  return job;
+}
+
+function jobLog(job, msg) {
+  job.logs.push({ time: new Date().toISOString(), msg });
+  if (job.logs.length > 80) job.logs.shift();
+}
+
+function applyProgress(job, event, data) {
+  const { phase, label, detail, resolved, total, count, page } = data || {};
+  jobLog(job, detail || label || event);
+
+  if (event === 'phase_start') {
+    // Upsert phase entry
+    const existing = job.phases.find(p => p.id === phase);
+    if (existing) { existing.status = 'running'; existing.detail = detail || ''; }
+    else job.phases.push({ id: phase, label: label || `Phase ${phase}`, status: 'running', detail: detail || '', pct: 0 });
+  } else if (event === 'phase_progress') {
+    const p = job.phases.find(p => p.id === phase);
+    if (p) {
+      p.detail = detail || p.detail;
+      if (resolved !== undefined && total) p.pct = Math.round((resolved / total) * 100);
+      if (count !== undefined && page) p.pct = Math.min(95, page * 6); // rough estimate
+    }
+  } else if (event === 'phase_done') {
+    const p = job.phases.find(p => p.id === phase);
+    if (p) { p.status = 'done'; p.detail = detail || p.detail; p.pct = 100; }
+    else job.phases.push({ id: phase, label: label || `Phase ${phase}`, status: 'done', detail: detail || '', pct: 100 });
+  }
+}
+
+// Prune completed jobs older than 10 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [id, job] of syncJobs) {
+    if (!job.running && job.endedAt && new Date(job.endedAt).getTime() < cutoff) {
+      syncJobs.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+// ──────────────────────────────────────────────────────────────────────────────
+
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
     ? ['https://pocketdashboard.app', 'https://www.pocketdashboard.app']
@@ -448,20 +507,41 @@ app.post('/api/sync/:storeId', async (req, res) => {
   if (!storeId) return res.status(400).json({ error: 'storeId is required' });
 
   const forceFullSync = req.query.full === 'true';
-  // Optional custom date range from dashboard Sync modal
-  const fromDate = req.body?.fromDate || null;   // YYYY-MM-DD
-  const toDate   = req.body?.toDate   || null;   // YYYY-MM-DD
-
-  const dateStr = fromDate ? ` | range: ${fromDate} → ${toDate || 'today'}` : '';
+  const fromDate = req.body?.fromDate || null;
+  const toDate   = req.body?.toDate   || null;
+  const dateStr  = fromDate ? ` | range: ${fromDate} → ${toDate || 'today'}` : '';
   console.log(`[Sync API] Triggered for store: ${storeId} full=${forceFullSync}${dateStr}`);
-  try {
-    const result = await syncStoreData(storeId, { forceFullSync, fromDate, toDate });
-    console.log(`[Sync API] ✅ Completed for ${storeId}:`, result);
-    res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced, mode: result.mode });
-  } catch (err) {
-    console.error(`[Sync API] ❌ Failed for ${storeId}:`, err.message);
-    res.status(500).json({ status: 'sync_failed', error: err.message });
+
+  const existing = syncJobs.get(storeId);
+  if (existing?.running && existing.type === 'shopify') {
+    return res.json({ status: 'already_running', storeId });
   }
+
+  const job = startJob(storeId, 'shopify');
+  job.phases = [
+    { id: 1, label: 'Fetching orders from Shopify', status: 'running', detail: 'Connecting…', pct: 0 },
+    { id: 2, label: 'Saving to database',            status: 'pending', detail: '',            pct: 0 },
+  ];
+  jobLog(job, `Shopify sync started${dateStr}`);
+  res.json({ status: 'sync_started', storeId });
+
+  syncStoreData(storeId, { forceFullSync, fromDate, toDate }).then(result => {
+    job.running  = false;
+    job.endedAt  = new Date().toISOString();
+    job.result   = result;
+    job.phases.forEach(p => { p.status = 'done'; p.pct = 100; });
+    job.phases[0].detail = `${result.totalSynced} orders fetched`;
+    job.phases[1].detail = `${result.totalSynced} orders saved`;
+    jobLog(job, `✅ Done — ${result.totalSynced} orders synced (${result.mode})`);
+    console.log(`[Sync API] ✅ Completed for ${storeId}:`, result);
+  }).catch(err => {
+    job.running = false;
+    job.endedAt = new Date().toISOString();
+    job.error   = err.message;
+    job.phases.forEach(p => { if (p.status === 'running') p.status = 'error'; });
+    jobLog(job, `❌ Error: ${err.message}`);
+    console.error(`[Sync API] ❌ Failed for ${storeId}:`, err.message);
+  });
 });
 
 /**
@@ -942,21 +1022,50 @@ app.post('/api/shiprocket/connect/:storeId', async (req, res) => {
 });
 
 /**
+ * GET /api/sync-progress/:storeId
+ * Returns live sync progress for the given store (polled by the UI every 2s).
+ */
+app.get('/api/sync-progress/:storeId', (req, res) => {
+  const job = syncJobs.get(req.params.storeId);
+  if (!job) return res.json({ running: false });
+  res.json(job);
+});
+
+/**
  * POST /api/shiprocket/sync/:storeId
- * Pulls all Shiprocket shipments and upserts them into `shipments`.
+ * Starts Shiprocket sync in background, returns immediately.
+ * Poll GET /api/sync-progress/:storeId for live status.
  */
 app.post('/api/shiprocket/sync/:storeId', async (req, res) => {
   const { storeId } = req.params;
   if (!storeId) return res.status(400).json({ error: 'storeId is required' });
 
-  try {
-    const result = await syncShiprocketShipments(storeId);
-    console.log(`[Shiprocket API] ✅ Sync complete for ${storeId}:`, result);
-    res.json({ status: 'sync_complete', storeId, totalSynced: result.totalSynced });
-  } catch (err) {
-    console.error(`[Shiprocket API] ❌ Sync failed for ${storeId}:`, err.message);
-    res.status(500).json({ status: 'sync_failed', error: err.message });
+  const existing = syncJobs.get(storeId);
+  if (existing?.running) {
+    return res.json({ status: 'already_running', storeId });
   }
+
+  const job = startJob(storeId, 'shiprocket');
+  jobLog(job, 'Shiprocket sync started');
+  res.json({ status: 'sync_started', storeId });  // respond immediately
+
+  syncShiprocketShipments(storeId, {
+    onProgress: (event, data) => applyProgress(job, event, data),
+  }).then(result => {
+    job.running = false;
+    job.endedAt = new Date().toISOString();
+    job.result  = result;
+    jobLog(job, `✅ Done — ${result.totalSynced} shipments synced`);
+    console.log(`[Shiprocket API] ✅ Sync complete for ${storeId}:`, result);
+  }).catch(err => {
+    job.running = false;
+    job.endedAt = new Date().toISOString();
+    job.error   = err.message;
+    jobLog(job, `❌ Error: ${err.message}`);
+    // Mark any running phases as error
+    job.phases.forEach(p => { if (p.status === 'running') p.status = 'error'; });
+    console.error(`[Shiprocket API] ❌ Sync failed for ${storeId}:`, err.message);
+  });
 });
 
 /**

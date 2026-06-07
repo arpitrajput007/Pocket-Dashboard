@@ -263,7 +263,9 @@ export default function AdvancedSettings({ store }) {
       const res = await fetch(`${API_URL}/api/shiprocket/sync/${store.id}`, { method: 'POST' });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Sync failed (status ${res.status})`);
-      await loadShiprocketStatus();
+      // Sync now runs in background — progress shown in the drawer.
+      // Poll for updated count after a short delay.
+      setTimeout(() => loadShiprocketStatus(), 5000);
     } catch (err) {
       setSrError(err.message);
     } finally {
