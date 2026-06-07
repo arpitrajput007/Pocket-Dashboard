@@ -148,13 +148,22 @@ async function srFetch(url, getToken, { retries = 4 } = {}) {
 }
 
 /**
- * Pull Shiprocket orders/shipments for a store and upsert them into `shipments`.
- * Respects shiprocket_sync_from_date — only fetches orders on or after that date.
- * Stops paginating early once all orders on a page predate the cutoff.
+ * Pull Shiprocket shipments for a store and upsert them into `shipments`.
+ *
+ * IMPORTANT LESSONS LEARNED (probe-confirmed):
+ *  1. Use /shipments endpoint, NOT /orders.
+ *     /orders caps at ~472 active orders regardless of any date filter.
+ *     /shipments returns all historical delivery records (the 1645 in the dashboard).
+ *  2. Date format must be DD-MMM-YYYY (e.g. 08-Jun-2024).
+ *     YYYY-MM-DD is silently ignored by the Shiprocket API.
+ *  3. /shipments field names differ from /orders:
+ *     awb_code (not awb), order_id (not id for the order reference),
+ *     courier_name (not courier), channel_order_id same.
+ *
  * @param {string} storeId
  * @param {object} opts  { maxPages, fromDateOverride }
  */
-async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverride = null } = {}) {
+async function syncShiprocketShipments(storeId, { maxPages = 300, fromDateOverride = null } = {}) {
   console.log(`[Shiprocket] ▶ Starting shipment sync for store: ${storeId}`);
 
   const { data: store, error } = await supabase
@@ -168,21 +177,13 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
     throw new Error('Shiprocket is not connected for this store');
   }
 
-  // Resolve the date window.
-  // IMPORTANT: Shiprocket's /orders endpoint only returns a recent default window
-  // (~last 30-45 days) when NO from_date is sent. Sending no filter is therefore NOT
-  // "fetch all" — it silently caps the pull to recent orders. So we ALWAYS send an
-  // explicit from_date + to_date. When nothing is configured we default to a wide
-  // 2-year lookback so the full history is pulled.
-  // Shiprocket requires dates as DD-MMM-YYYY (e.g. 08-Jun-2024).
-  // YYYY-MM-DD is silently ignored — the API returns only its default recent
-  // window (~30 days) when the date can't be parsed. Confirmed via probe.
+  // Date helpers — Shiprocket requires DD-MMM-YYYY for the API but we compare
+  // dates as YYYY-MM-DD strings for ordering.
   const SR_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const srDate = (ms) => {
     const d = new Date(ms);
     return `${String(d.getDate()).padStart(2,'0')}-${SR_MONTHS[d.getMonth()]}-${d.getFullYear()}`;
   };
-  // Convert a stored YYYY-MM-DD string to DD-MMM-YYYY for the API.
   const toSrDate = (ymdStr) => {
     if (!ymdStr) return null;
     const [y, m, day] = ymdStr.split('-');
@@ -191,11 +192,11 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
 
   const DEFAULT_LOOKBACK_DAYS = 730;
   const ymd = (ms) => new Date(ms).toISOString().substring(0, 10);
-  const rawFrom    = fromDateOverride || store.shiprocket_sync_from_date || null;
+  const rawFrom     = fromDateOverride || store.shiprocket_sync_from_date || null;
   const fromDateYMD = rawFrom || ymd(Date.now() - DEFAULT_LOOKBACK_DAYS * 864e5); // YYYY-MM-DD for comparisons
-  const fromDate   = toSrDate(fromDateYMD);                                        // DD-MMM-YYYY for API
-  const toDate     = srDate(Date.now() + 864e5);                                   // tomorrow, DD-MMM-YYYY
-  console.log(`[Shiprocket] Fetching orders from ${fromDate} to ${toDate} (DD-MMM-YYYY format)`);
+  const fromDate    = toSrDate(fromDateYMD);                                       // DD-MMM-YYYY for API
+  const toDate      = srDate(Date.now() + 864e5);                                  // tomorrow, DD-MMM-YYYY
+  console.log(`[Shiprocket] Fetching /shipments from ${fromDate} to ${toDate} (DD-MMM-YYYY)`);
 
   // Token holder shared across pages; srFetch refreshes it on 401.
   let token = await getValidToken(store);
@@ -213,84 +214,87 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
   let failedPages = 0;
 
   while (page <= totalPages && page <= maxPages) {
-    // Always pass an explicit from_date + to_date — otherwise Shiprocket caps the
-    // response to a recent default window and the full history never syncs.
-    const url = `${SR_BASE}/orders?per_page=100&page=${page}&sort=DESC&sort_by=created_at`
+    // Use /shipments — returns all historical records unlike /orders which caps at ~472.
+    // DD-MMM-YYYY date format confirmed required; YYYY-MM-DD is silently ignored.
+    const url = `${SR_BASE}/shipments?per_page=100&page=${page}&sort=DESC&sort_by=created_at`
       + `&from_date=${fromDate}&to_date=${toDate}`;
 
     let body;
     try {
       body = await srFetch(url, getToken);
     } catch (err) {
-      // Don't abort the whole sync on one bad page — log, count it, move on so the
-      // remaining pages still get synced instead of leaving a partial, stuck count.
       failedPages++;
       console.warn(`[Shiprocket] ⚠ Page ${page} failed (${err.message}) — skipping`);
       page++;
       continue;
     }
 
-    const orders = Array.isArray(body.data) ? body.data : [];
+    // /shipments response: body.data is the array (same as /orders)
+    const shipments = Array.isArray(body.data) ? body.data : [];
     totalPages = body.meta?.pagination?.total_pages || totalPages;
 
-    if (orders.length === 0) break;
+    if (shipments.length === 0) break;
 
-    // Client-side early stop: Shiprocket returns newest-first, so once we hit
-    // an order older than fromDateYMD the rest of the pages will also be older.
-    // Use YYYY-MM-DD (fromDateYMD) for date string comparison, not the API format.
+    // Client-side early stop: newest-first, so once all records on a page predate
+    // the cutoff the rest of the pages will also be older.
     if (fromDateYMD) {
-      const allOlderThanCutoff = orders.every(o => {
-        const orderDate = (o.created_at || '').substring(0, 10);
-        return orderDate && orderDate < fromDateYMD;
+      const allOlderThanCutoff = shipments.every(s => {
+        const d = (s.created_at || '').substring(0, 10);
+        return d && d < fromDateYMD;
       });
       if (allOlderThanCutoff) {
-        console.log(`[Shiprocket] All orders on page ${page} predate ${fromDateYMD} — stopping early`);
+        console.log(`[Shiprocket] All records on page ${page} predate ${fromDateYMD} — stopping early`);
         break;
       }
     }
 
-    // Filter out orders older than fromDateYMD before upserting
-    const filteredOrders = fromDateYMD
-      ? orders.filter(o => !o.created_at || (o.created_at || '').substring(0, 10) >= fromDateYMD)
-      : orders;
+    const filtered = fromDateYMD
+      ? shipments.filter(s => !s.created_at || (s.created_at || '').substring(0, 10) >= fromDateYMD)
+      : shipments;
 
-    if (filteredOrders.length === 0) { page++; continue; }
+    if (filtered.length === 0) { page++; continue; }
 
-    const rows = filteredOrders.map(o => {
-      // shipments can be an array, a single object, or absent depending on order state
-      let firstShipment = null;
-      if (Array.isArray(o.shipments) && o.shipments.length > 0) firstShipment = o.shipments[0];
-      else if (o.shipments && typeof o.shipments === 'object') firstShipment = o.shipments;
+    // /shipments field mapping (differs from /orders):
+    //   s.id              → shiprocket_shipment_id
+    //   s.order_id        → shiprocket_order_id  (the parent order)
+    //   s.awb_code        → awb
+    //   s.courier_name    → courier
+    //   s.channel_order_id→ shopify_order_name (same as /orders)
+    //   s.status          → raw_status (string like "Delivered", "RTO")
+    //   s.updated_at      → status_updated_at
+    const rows = filtered.map(s => ({
+      store_id: storeId,
+      shiprocket_order_id: s.order_id ? String(s.order_id) : null,
+      shiprocket_shipment_id: s.id ? String(s.id) : null,
+      awb: s.awb_code || null,
+      courier: s.courier_name || null,
+      shopify_order_name: normalizeOrderName(s.channel_order_id),
+      status: normalizeShiprocketStatus(s.status || ''),
+      raw_status: s.status || null,
+      status_code: typeof s.status_id === 'number' ? s.status_id : null,
+      status_updated_at: s.updated_at ? new Date(s.updated_at).toISOString() : new Date().toISOString(),
+      source: 'shiprocket',
+      updated_at: new Date().toISOString()
+    }));
 
-      const rawStatus = o.status || firstShipment?.status || '';
-
-      return {
-        store_id: storeId,
-        shiprocket_order_id: String(o.id),
-        shiprocket_shipment_id: firstShipment?.id ? String(firstShipment.id) : null,
-        awb: firstShipment?.awb || o.awb || null,
-        courier: firstShipment?.courier || o.courier_name || null,
-        shopify_order_name: normalizeOrderName(o.channel_order_id),
-        status: normalizeShiprocketStatus(rawStatus),
-        raw_status: rawStatus || null,
-        status_code: typeof o.status_code === 'number' ? o.status_code : null,
-        status_updated_at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
-        source: 'shiprocket',
-        updated_at: new Date().toISOString()
-      };
-    });
-
+    // Conflict on shiprocket_shipment_id — each shipment is unique by its own ID,
+    // not the parent order ID (an order can have multiple shipment attempts).
     const { error: upErr } = await supabase
       .from('shipments')
-      .upsert(rows, { onConflict: 'store_id,shiprocket_order_id' });
+      .upsert(rows, { onConflict: 'store_id,shiprocket_shipment_id' });
 
     if (upErr) {
-      // Skip this page's write but keep going — a single bad batch shouldn't strand
-      // every later page and freeze the synced count.
-      failedPages++;
-      console.warn(`[Shiprocket] ⚠ Upsert failed on page ${page} (${upErr.message}) — skipping`);
-      page++;
-      continue;
+      // Fall back to order_id conflict in case shiprocket_shipment_id column
+      // doesn't have the unique constraint yet.
+      const { error: upErr2 } = await supabase
+        .from('shipments')
+        .upsert(rows, { onConflict: 'store_id,shiprocket_order_id' });
+      if (upErr2) {
+        failedPages++;
+        console.warn(`[Shiprocket] ⚠ Upsert failed page ${page} (${upErr2.message}) — skipping`);
+        page++;
+        continue;
+      }
     }
 
     totalUpserted += rows.length;
@@ -299,7 +303,7 @@ async function syncShiprocketShipments(storeId, { maxPages = 200, fromDateOverri
   }
 
   if (failedPages > 0) {
-    console.warn(`[Shiprocket] ⚠ ${failedPages} page(s) failed and were skipped — synced count may be incomplete until next run`);
+    console.warn(`[Shiprocket] ⚠ ${failedPages} page(s) skipped — count may be incomplete`);
   }
 
   await supabase.from('stores')
@@ -331,33 +335,38 @@ async function probeShiprocket(storeId) {
   const from2y = srFmt(Date.now() - 730 * 864e5);
   const toTomorrow = srFmt(Date.now() + 864e5);
 
-  const variants = {
-    A_no_date:               `per_page=50&page=1&sort=DESC&sort_by=created_at`,
-    B_ddmmmyyyy_2y:          `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}`,
-    C_ddmmmyyyy_1y:          `per_page=50&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}&to_date=${toTomorrow}`,
-    D_ddmmmyyyy_p100_2y:     `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}`,
-    E_ddmmmyyyy_p100_1y:     `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}&to_date=${toTomorrow}`,
+  // Test BOTH /orders (known to cap at ~472) and /shipments (should return full history).
+  const endpoints = {
+    orders_no_date:      { base: 'orders',    qs: `per_page=100&page=1&sort=DESC&sort_by=created_at` },
+    orders_2y:           { base: 'orders',    qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}` },
+    shipments_no_date:   { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at` },
+    shipments_2y:        { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}` },
+    shipments_1y:        { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}&to_date=${toTomorrow}` },
   };
 
   const results = {};
-  for (const [label, qs] of Object.entries(variants)) {
+  for (const [label, { base, qs }] of Object.entries(endpoints)) {
     try {
-      const res = await fetch(`${SR_BASE}/orders?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${SR_BASE}/${base}?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json().catch(() => ({}));
       const data = Array.isArray(body.data) ? body.data : [];
       const dates = data.map(o => (o.created_at || '').slice(0, 10)).filter(Boolean);
+      // sample channel_order_id for verification
+      const sampleChannels = data.slice(0, 3).map(o => o.channel_order_id || o.channel_id || null);
       results[label] = {
+        endpoint: `/${base}`,
         status: res.status,
         returned: data.length,
         pagination: body.meta?.pagination || null,
         newestDate: dates[0] || null,
         oldestOnPage: dates[dates.length - 1] || null,
+        sampleChannelOrderIds: sampleChannels,
         message: body.message || null,
       };
     } catch (e) {
       results[label] = { error: e.message };
     }
-    await sleep(600); // be gentle with rate limits
+    await sleep(600);
   }
   return { storeId, probedAt: new Date().toISOString(), results };
 }
