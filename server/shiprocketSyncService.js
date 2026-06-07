@@ -363,18 +363,27 @@ async function probeShiprocket(storeId) {
   }
   await sleep(500);
 
-  // 3) How many pages does /shipments actually have? Follow next links to count.
+  // 3) How many pages does /shipments actually have?
+  // IMPORTANT: Shiprocket's next URL uses http:// — must replace with https://
+  // or the auth header is dropped on redirect and page 2+ returns empty.
+  const MO2 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const srFmt2 = (ms) => { const d=new Date(ms); return `${String(d.getDate()).padStart(2,'0')}-${MO2[d.getMonth()]}-${d.getFullYear()}`; };
+  const from2y = srFmt2(Date.now() - 730 * 864e5);
+  const toTmrw = srFmt2(Date.now() + 864e5);
   let shipmentsPageCount = 0;
   let shipmentsTotalItems = 0;
-  let nextUrl = `${SR_BASE}/shipments?per_page=100&page=1`;
+  let nextUrl = `${SR_BASE}/shipments?per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTmrw}`;
   while (nextUrl && shipmentsPageCount < 30) {
+    // Force HTTPS — Shiprocket's pagination links use http://
+    nextUrl = nextUrl.replace(/^http:\/\//i, 'https://');
     try {
       const r = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
       const b = await r.json().catch(() => ({}));
       const data = Array.isArray(b.data) ? b.data : [];
       shipmentsPageCount++;
       shipmentsTotalItems += data.length;
-      nextUrl = b.meta?.pagination?.links?.next || null;
+      const rawNext = b.meta?.pagination?.links?.next || null;
+      nextUrl = rawNext ? rawNext.replace(/^http:\/\//i, 'https://') : null;
       if (data.length < 100) break;
     } catch(e) { break; }
     await sleep(300);
