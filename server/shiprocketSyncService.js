@@ -366,13 +366,11 @@ async function probeShiprocket(storeId) {
   // 3) How many pages does /shipments actually have?
   // IMPORTANT: Shiprocket's next URL uses http:// — must replace with https://
   // or the auth header is dropped on redirect and page 2+ returns empty.
-  const MO2 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const srFmt2 = (ms) => { const d=new Date(ms); return `${String(d.getDate()).padStart(2,'0')}-${MO2[d.getMonth()]}-${d.getFullYear()}`; };
-  const from2y = srFmt2(Date.now() - 730 * 864e5);
-  const toTmrw = srFmt2(Date.now() + 864e5);
+  const from2yShipments = from2y;  // reuse already-computed 2-year date
+  const toTmrw = toTomorrow;       // reuse already-computed tomorrow date
   let shipmentsPageCount = 0;
   let shipmentsTotalItems = 0;
-  let nextUrl = `${SR_BASE}/shipments?per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTmrw}`;
+  let nextUrl = `${SR_BASE}/shipments?per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2yShipments}&to_date=${toTmrw}`;
   while (nextUrl && shipmentsPageCount < 30) {
     // Force HTTPS — Shiprocket's pagination links use http://
     nextUrl = nextUrl.replace(/^http:\/\//i, 'https://');
