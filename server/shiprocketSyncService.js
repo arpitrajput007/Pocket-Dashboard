@@ -335,32 +335,50 @@ async function probeShiprocket(storeId) {
   const from2y = srFmt(Date.now() - 730 * 864e5);
   const toTomorrow = srFmt(Date.now() + 864e5);
 
-  // Test BOTH /orders (known to cap at ~472) and /shipments (should return full history).
+  // 1) Dump ALL field names from /shipments page 1 so we can see the exact structure
+  let shipmentFieldsRaw = null;
+  try {
+    const r = await fetch(`${SR_BASE}/shipments?per_page=5&page=1`, { headers: { Authorization: `Bearer ${token}` } });
+    const b = await r.json().catch(() => ({}));
+    const first = (Array.isArray(b.data) ? b.data : [])[0] || null;
+    shipmentFieldsRaw = first ? Object.fromEntries(
+      Object.entries(first).map(([k,v]) => [k, Array.isArray(v) ? `[array len=${v.length}]` : typeof v === 'object' && v ? `{keys:${Object.keys(v).join(',')}}` : v])
+    ) : null;
+  } catch(e) { shipmentFieldsRaw = { error: e.message }; }
+  await sleep(600);
+
+  // 2) Test /orders vs /shipments for total counts and pagination shape
   const endpoints = {
     orders_no_date:      { base: 'orders',    qs: `per_page=100&page=1&sort=DESC&sort_by=created_at` },
     orders_2y:           { base: 'orders',    qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}` },
     shipments_no_date:   { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at` },
     shipments_2y:        { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from2y}&to_date=${toTomorrow}` },
-    shipments_1y:        { base: 'shipments', qs: `per_page=100&page=1&sort=DESC&sort_by=created_at&from_date=${from1y}&to_date=${toTomorrow}` },
   };
 
-  const results = {};
+  const results = { shipmentFieldsRaw };
   for (const [label, { base, qs }] of Object.entries(endpoints)) {
     try {
       const res = await fetch(`${SR_BASE}/${base}?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json().catch(() => ({}));
       const data = Array.isArray(body.data) ? body.data : [];
       const dates = data.map(o => (o.created_at || '').slice(0, 10)).filter(Boolean);
-      // sample channel_order_id for verification
-      const sampleChannels = data.slice(0, 3).map(o => o.channel_order_id || o.channel_id || null);
+      // Show every possible ID field on first 3 records so we can spot the Shopify order name
+      const sampleIds = data.slice(0, 3).map(o => ({
+        channel_order_id: o.channel_order_id,
+        channel_id: o.channel_id,
+        order_id: o.order_id,
+        id: o.id,
+        awb_code: o.awb_code,
+        status: o.status,
+      }));
       results[label] = {
         endpoint: `/${base}`,
         status: res.status,
         returned: data.length,
-        pagination: body.meta?.pagination || null,
+        pagination: body.meta?.pagination || body.pagination || null,
         newestDate: dates[0] || null,
         oldestOnPage: dates[dates.length - 1] || null,
-        sampleChannelOrderIds: sampleChannels,
+        sampleIds,
         message: body.message || null,
       };
     } catch (e) {
