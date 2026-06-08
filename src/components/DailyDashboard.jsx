@@ -589,7 +589,17 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                 <MetricCard label="Number of Items" value={itemsCount} glow="white" note="Click to see breakdown" onClick={() => setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems })} />
                 <MetricCard label="CPP" value={itemsCount > 0 ? fmt(cpp) : '₹0'} glow="white" note="Click for product breakdown" />
                 <MetricCard label="Fulfilled" value={tCounts['Fulfilled'] || 0} color="var(--profit-color)" glow="green" active={filterKey === 'fulfilled'} onClick={() => toggleDayFilter(dateStr, 'fulfilled')} />
-                <MetricCard label="Delivered" value={tCounts['Delivered'] || 0} color="var(--profit-color)" glow="green" note="Click to see items" onClick={() => setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems: deliveredItems, deliveredOrders, shipmentsMap, mode: 'delivered' })} />
+                <MetricCard label="Delivered" value={tCounts['Delivered'] || 0} color="var(--profit-color)" glow="green" active={filterKey === 'delivered'} note="Click to expand orders" onClick={() => {
+                    if (filterKey !== 'delivered') {
+                      // Turning ON: expand inline orders AND open product popup
+                      toggleDayFilter(dateStr, 'delivered');
+                      setModalState({ type: 'items', date: dateStr, prettyDate: pretty, allItems: deliveredItems, deliveredOrders, shipmentsMap, mode: 'delivered' });
+                    } else {
+                      // Turning OFF: collapse inline orders AND close popup
+                      toggleDayFilter(dateStr, 'delivered');
+                      setModalState({ type: null });
+                    }
+                  }} />
                 <MetricCard label="In Transit" value={tCounts['In Transit'] || 0} color="#60a5fa" glow="blue" active={filterKey === 'in-transit'} onClick={() => toggleDayFilter(dateStr, 'in-transit')} />
                 <MetricCard label="Out for Delivery" value={tCounts['Out for Delivery'] || 0} color="#a78bfa" glow="purple" active={filterKey === 'out-delivery'} onClick={() => toggleDayFilter(dateStr, 'out-delivery')} />
                 <MetricCard label="Failed Delivery" value={tCounts['Failed Delivery'] || 0} color="#f97316" glow="orange" active={filterKey === 'failed-delivery'} onClick={() => toggleDayFilter(dateStr, 'failed-delivery')} />
