@@ -1017,4 +1017,115 @@ function ItemsModal({ prettyDate, allItems, deliveredOrders = [], shipmentsMap =
   );
 }
 
-export { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal };
+// ── CppModal ───────────────────────────────────────────────────────────────
+// Shows a breakdown of Cost Per Purchase for the day.
+// If the owner has set up a per-product ad breakdown we show CPP per product.
+// Otherwise we just show the formula summary.
+function CppModal({ prettyDate, ad, itemsCount, cpp, allItems, adProductBreakdown, onClose }) {
+  const fmt = v => '₹' + Math.round(v).toLocaleString('en-IN');
+
+  // Flatten ad product breakdown (handles both legacy flat and nested platform shapes)
+  const adSplits = flattenAdProductBreakdown(adProductBreakdown); // { title: amount }
+  const hasBreakdown = Object.keys(adSplits).length > 0;
+
+  // Build per-product unit counts from allItems
+  const unitsByTitle = {};
+  allItems.forEach(li => {
+    const key = li.title || 'Unknown';
+    unitsByTitle[key] = (unitsByTitle[key] || 0) + parseInt(li.quantity || 1) * (li.packSize || 1);
+  });
+
+  // Combine ad splits + unallocated products (those with units but no ad spend)
+  const allocatedTotal = Object.values(adSplits).reduce((s, v) => s + v, 0);
+  const unallocated = ad - allocatedTotal;
+
+  // Rows: products that have an ad split entry
+  const rows = Object.entries(adSplits)
+    .map(([title, spend]) => {
+      const units = unitsByTitle[title] || 0;
+      const productCpp = units > 0 ? spend / units : null;
+      return { title, spend, units, productCpp };
+    })
+    .sort((a, b) => b.spend - a.spend);
+
+  return (
+    <div className="modal-overlay active" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 500, width: '95vw', padding: '28px 24px' }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>📊 CPP Breakdown</div>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#fff' }}>{prettyDate}</h2>
+          </div>
+          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>×</button>
+        </div>
+
+        {/* Formula summary chips */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+          {[
+            { label: 'Ad Spend', value: fmt(ad), color: '#a78bfa', bg: 'rgba(167,139,250,0.1)', bd: 'rgba(167,139,250,0.25)' },
+            { label: 'Total Units', value: itemsCount, color: '#38bdf8', bg: 'rgba(56,189,248,0.08)', bd: 'rgba(56,189,248,0.2)' },
+            { label: 'CPP', value: itemsCount > 0 ? fmt(cpp) : '₹0', color: '#fbbf24', bg: 'rgba(251,191,36,0.1)', bd: 'rgba(251,191,36,0.25)' },
+          ].map(s => (
+            <div key={s.label} style={{ padding: '10px 16px', borderRadius: 10, background: s.bg, border: `1px solid ${s.bd}`, display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 120 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: s.color }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Formula explanation */}
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginBottom: 20, padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, borderLeft: '3px solid rgba(167,139,250,0.4)' }}>
+          CPP = Total Ad Spend ÷ Total Units Ordered &nbsp;·&nbsp; Lower is better
+        </div>
+
+        {/* Per-product breakdown (only when ad split is configured) */}
+        {hasBreakdown ? (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>Per-Product CPP</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+              {rows.map((r, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, color: '#fff', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
+                    {r.units > 0 && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>{r.units} unit{r.units !== 1 ? 's' : ''} ordered</div>}
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 12, color: '#a78bfa', fontWeight: 600 }}>{fmt(r.spend)} ad</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: r.productCpp !== null ? '#fbbf24' : 'rgba(255,255,255,0.3)', marginTop: 2 }}>
+                      {r.productCpp !== null ? fmt(r.productCpp) + ' CPP' : '— CPP'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Unallocated row */}
+              {unallocated > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'rgba(251,191,36,0.04)', border: '1px solid rgba(251,191,36,0.15)', borderRadius: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>Unallocated</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>Not split across products</div>
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#fbbf24' }}>{fmt(unallocated)}</div>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '28px 0', color: 'rgba(255,255,255,0.3)' }}>
+            <div style={{ fontSize: 28, marginBottom: 10 }}>📋</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>No per-product ad split yet</div>
+            <div style={{ fontSize: 12, lineHeight: 1.6, maxWidth: 280, margin: '0 auto' }}>
+              Open <strong style={{ color: '#a78bfa' }}>Ad Spend</strong> and set a per-product breakdown to see CPP per product here.
+            </div>
+          </div>
+        )}
+
+        <button onClick={onClose} className="primary" style={{ width: '100%', marginTop: 22, padding: '12px', fontSize: 14, borderRadius: 10, fontWeight: 600 }}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+export { ProductPNLModal, AdSpendModal, NetProfitModal, MetricCard, ItemsModal, CppModal };
