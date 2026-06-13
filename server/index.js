@@ -1215,6 +1215,138 @@ app.delete('/api/shiprocket/disconnect/:storeId', async (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
+// ============================================================================
+// SUPER ADMIN API — Protected endpoints for internal operations
+// ============================================================================
+
+const verifyAdminToken = async (req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'No auth token' });
+  const token = auth.slice(7);
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return res.status(401).json({ error: 'Invalid or expired token' });
+    const adminList = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+    if (adminList.length > 0 && !adminList.includes(user.email?.toLowerCase())) {
+      return res.status(403).json({ error: 'Access denied — not an admin' });
+    }
+    req.adminUser = user;
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: 'Auth verification failed' });
+  }
+};
+
+app.get('/api/admin/overview', verifyAdminToken, async (req, res) => {
+  try {
+    const { data: stores, error } = await supabase
+      .from('stores')
+      .select('id, store_name, shopify_domain, created_at, last_synced_at, plan_type, shiprocket_connected, is_active, enabled_ad_platforms');
+    if (error) throw new Error(error.message);
+
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const totalStores = stores?.length || 0;
+    const activeStores = stores?.filter(s => s.is_active !== false).length || 0;
+    const shopifyConnected = stores?.filter(s => s.shopify_domain).length || 0;
+    const shiprocketConnected = stores?.filter(s => s.shiprocket_connected).length || 0;
+    const metaConnected = stores?.filter(s => (s.enabled_ad_platforms || []).includes('meta')).length || 0;
+    const newToday = stores?.filter(s => s.created_at?.startsWith(todayStr)).length || 0;
+    const newThisMonth = stores?.filter(s => s.created_at > monthAgo).length || 0;
+
+    const monthlySignups = {};
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthlySignups[key] = 0;
+    }
+    stores?.forEach(s => {
+      const key = s.created_at?.slice(0, 7);
+      if (key && Object.prototype.hasOwnProperty.call(monthlySignups, key)) monthlySignups[key]++;
+    });
+
+    const lastSynced24h = stores?.filter(s => s.last_synced_at && new Date(s.last_synced_at) > new Date(now.getTime() - 86400000)).length || 0;
+
+    res.json({ totalStores, activeStores, shopifyConnected, shiprocketConnected, metaConnected, newToday, newThisMonth, monthlySignups, lastSynced24h });
+  } catch (err) {
+    console.error('[Admin] Overview error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/stores', verifyAdminToken, async (req, res) => {
+  try {
+    const { data: stores, error } = await supabase
+      .from('stores')
+      .select('id, store_name, shopify_domain, created_at, last_synced_at, plan_type, shiprocket_connected, is_active, products_synced_at, enabled_ad_platforms')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    const { data: orderRows } = await supabase.from('orders').select('store_id');
+    const orderCounts = {};
+    orderRows?.forEach(o => { orderCounts[o.store_id] = (orderCounts[o.store_id] || 0) + 1; });
+
+    const { data: shipRows } = await supabase.from('shipments').select('store_id');
+    const shipCounts = {};
+    shipRows?.forEach(s => { shipCounts[s.store_id] = (shipCounts[s.store_id] || 0) + 1; });
+
+    const enriched = stores?.map(s => ({
+      id: s.id,
+      store_name: s.store_name,
+      shopify_domain: s.shopify_domain,
+      plan_type: s.plan_type || 'free',
+      is_active: s.is_active !== false,
+      shiprocket_connected: !!s.shiprocket_connected,
+      has_meta: (s.enabled_ad_platforms || []).includes('meta'),
+      created_at: s.created_at,
+      last_synced_at: s.last_synced_at,
+      products_synced_at: s.products_synced_at,
+      order_count: orderCounts[s.id] || 0,
+      shipment_count: shipCounts[s.id] || 0,
+    }));
+
+    res.json({ stores: enriched, total: enriched?.length || 0 });
+  } catch (err) {
+    console.error('[Admin] Stores error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/orders-summary', verifyAdminToken, async (req, res) => {
+  try {
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('total_price, created_at')
+      .gte('created_at', twelveMonthsAgo.toISOString());
+    if (error) throw new Error(error.message);
+
+    const now = new Date();
+    const byMonth = {};
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      byMonth[key] = { count: 0, revenue: 0 };
+    }
+    orders?.forEach(o => {
+      const key = o.created_at?.slice(0, 7);
+      if (key && byMonth[key]) {
+        byMonth[key].count++;
+        byMonth[key].revenue += parseFloat(o.total_price || 0);
+      }
+    });
+
+    res.json({ byMonth, totalOrders: orders?.length || 0 });
+  } catch (err) {
+    console.error('[Admin] Orders summary error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMPORARY: diagnostic probe of Shiprocket /orders param variants. Remove later.
 app.get('/api/shiprocket/probe/:storeId', async (req, res) => {
   try {

@@ -41,6 +41,14 @@ const PersonalPanel = lazy(() => import('./components/PersonalPanel'));
 const PrivacyPolicy = lazy(() => import('./components/PrivacyPolicy'));
 const TermsAndConditions = lazy(() => import('./components/TermsAndConditions'));
 const ContactPage = lazy(() => import('./components/ContactPage'));
+const AdminPanel = lazy(() => import('./components/admin/AdminPanel'));
+
+const isAdminEmail = (email) => {
+  const list = (import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  // If no list configured, allow any authenticated user (dev mode)
+  if (list.length === 0) return !!email;
+  return list.includes(email?.toLowerCase());
+};
 
 const LoadingFallback = () => (
   <div style={{
@@ -195,6 +203,18 @@ export default function App() {
           <Route
             path="/dashboard"
             element={session ? <PersonalPanel session={session} store={store} onStoreConnected={refreshStore} /> : <Navigate to="/login" />}
+          />
+
+          {/* Super Admin Panel */}
+          <Route
+            path="/admin"
+            element={
+              session
+                ? isAdminEmail(session.user.email)
+                  ? <AdminPanel session={session} />
+                  : <Navigate to="/dashboard" />
+                : <Navigate to="/login" />
+            }
           />
 
           {/* Compatibility routes */}
