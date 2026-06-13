@@ -5,7 +5,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { AuroraBackground } from './aurora-background';
 import BrandLogo from './BrandLogo';
 
-export default function Login() {
+export default function Login({ adminMode = false }) {
   const [loading, setLoading]             = useState(false);
   const [email, setEmail]                 = useState('');
   const [password, setPassword]           = useState('');
@@ -21,44 +21,65 @@ export default function Login() {
     if (signInError) {
       setError(signInError.message);
       setLoading(false);
-    } else {
+    } else if (!adminMode) {
       navigate('/dashboard');
     }
+    // adminMode: App.jsx re-renders on auth state change — no navigate needed
   };
 
   return (
-    <div className="dark min-h-screen bg-background text-foreground antialiased selection:bg-accent/20 relative flex items-center justify-center p-4">
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '16px',
+      position: 'relative',
+      background: '#07070e',
+      boxSizing: 'border-box',
+    }}>
       <AuroraBackground />
-      
-      <div style={{ 
-        position: 'relative', 
-        background: 'var(--bg-secondary)', 
-        borderRadius: 'var(--radius-xl)', 
-        padding: '40px', 
-        maxWidth: '440px', 
-        width: '100%', 
-        boxShadow: 'var(--shadow-glow-aurora)', 
-        border: '1px solid var(--border-light)',
+
+      <div style={{
+        position: 'relative',
+        background: 'rgba(15,15,30,0.85)',
+        backdropFilter: 'blur(20px)',
+        borderRadius: '20px',
+        padding: '40px',
+        maxWidth: '440px',
+        width: '100%',
+        boxShadow: '0 0 0 1px rgba(99,102,241,0.15), 0 24px 64px rgba(0,0,0,0.6)',
+        border: '1px solid rgba(255,255,255,0.08)',
         zIndex: 10
       }}>
-        
-        <Link
-          to="/"
-          style={{ position: 'absolute', top: '16px', left: '16px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontSize: '14px' }}
-        >
-          <ArrowLeft size={16} /> Back
-        </Link>
 
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '36px', marginTop: '12px' }}>
+        {!adminMode && (
+          <Link
+            to="/"
+            style={{ position: 'absolute', top: '16px', left: '16px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontSize: '14px' }}
+          >
+            <ArrowLeft size={16} /> Back
+          </Link>
+        )}
+
+        {adminMode && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 28, padding: '7px 12px', borderRadius: 8, background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)', width: 'fit-content' }}>
+            <Shield size={13} color="#a5b4fc" />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#a5b4fc', letterSpacing: '0.04em' }}>ADMIN ACCESS</span>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '36px', marginTop: adminMode ? '0' : '12px' }}>
           <BrandLogo variant="full" iconSize={52} />
         </div>
 
-
         <h1 style={{ fontFamily: 'Outfit', fontSize: '28px', fontWeight: 800, marginBottom: '8px', color: '#fff' }}>
-          Welcome back
+          {adminMode ? 'Mission Control' : 'Welcome back'}
         </h1>
         <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '32px', fontSize: '15px' }}>
-          Sign in to access your real-time risk dashboard.
+          {adminMode
+            ? 'Sign in to access Pocket Dashboard Mission Control.'
+            : 'Sign in to access your real-time risk dashboard.'}
         </p>
 
         <form onSubmit={handleSignIn}>
@@ -121,15 +142,17 @@ export default function Login() {
           </button>
         </form>
 
-        <div style={{ marginTop: '24px', textAlign: 'center', fontSize: '14px', color: 'rgba(255,255,255,0.6)' }}>
-          New brand owner? {' '}
-          <Link
-            to="/signup"
-            style={{ color: 'rgba(56, 189, 248, 1)', cursor: 'pointer', fontWeight: 600, textDecoration: 'none' }}
-          >
-            Sign up free
-          </Link>
-        </div>
+        {!adminMode && (
+          <div style={{ marginTop: '24px', textAlign: 'center', fontSize: '14px', color: 'rgba(255,255,255,0.6)' }}>
+            New brand owner? {' '}
+            <Link
+              to="/signup"
+              style={{ color: 'rgba(56, 189, 248, 1)', cursor: 'pointer', fontWeight: 600, textDecoration: 'none' }}
+            >
+              Sign up free
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
