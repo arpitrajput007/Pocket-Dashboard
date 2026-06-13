@@ -50,6 +50,12 @@ const isAdminEmail = (email) => {
   return list.includes(email?.toLowerCase());
 };
 
+// Detect admin subdomain — admin.pocketdashboard.app renders admin panel at all paths
+const IS_ADMIN_SUBDOMAIN = typeof window !== 'undefined' &&
+  (window.location.hostname === 'admin.pocketdashboard.app' ||
+   window.location.hostname === 'admin.pocketdasboard.app' || // typo variant just in case
+   window.location.hostname.startsWith('admin.localhost'));
+
 const LoadingFallback = () => (
   <div style={{
     height: '100vh',
@@ -186,6 +192,36 @@ export default function App() {
   };
 
   if (loading) return <LoadingFallback />;
+
+  // ── Admin subdomain: admin.pocketdashboard.app ────────────────────────────
+  // Renders the admin panel at every path on this subdomain.
+  // Not logged in → show login. Logged in but not admin → redirect to main app.
+  if (IS_ADMIN_SUBDOMAIN) {
+    if (!session) return (
+      <ErrorBoundary>
+        <Suspense fallback={<LoadingFallback />}>
+          <Login adminMode />
+        </Suspense>
+      </ErrorBoundary>
+    );
+    if (!isAdminEmail(session.user.email)) {
+      return (
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'100vh', background:'#07070e', color:'#e2e8f0', fontFamily:'Outfit,sans-serif', gap:16 }}>
+          <div style={{ fontSize:32 }}>🔒</div>
+          <div style={{ fontSize:18, fontWeight:700 }}>Access Denied</div>
+          <div style={{ fontSize:13, color:'rgba(226,232,240,0.45)' }}>Your account does not have admin privileges.</div>
+          <a href="https://pocketdashboard.app/dashboard" style={{ marginTop:8, fontSize:13, color:'#a5b4fc' }}>← Back to Dashboard</a>
+        </div>
+      );
+    }
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<LoadingFallback />}>
+          <AdminPanel session={session} />
+        </Suspense>
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>
