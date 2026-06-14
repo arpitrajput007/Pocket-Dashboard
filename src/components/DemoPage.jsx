@@ -114,50 +114,20 @@ const AI_QA = {
 
 const fmt = (n) => '₹' + Math.abs(Number(n) || 0).toLocaleString('en-IN');
 
-// ─── Glow-border map (matches index.css glow variants exactly) ────────────────
-const GLOW = {
-  green:  { border:'rgba(45,212,160,0.15)',  active:'rgba(45,212,160,0.6)',  hover:'rgba(45,212,160,0.55)',  shadow:'rgba(45,212,160,0.18)'  },
-  red:    { border:'rgba(251,113,133,0.15)', active:'rgba(251,113,133,0.6)', hover:'rgba(251,113,133,0.55)', shadow:'rgba(251,113,133,0.18)' },
-  blue:   { border:'rgba(96,165,250,0.15)',  active:'rgba(96,165,250,0.6)',  hover:'rgba(96,165,250,0.55)',  shadow:'rgba(96,165,250,0.18)'  },
-  purple: { border:'rgba(167,139,250,0.15)', active:'rgba(167,139,250,0.6)', hover:'rgba(167,139,250,0.55)', shadow:'rgba(167,139,250,0.18)' },
-  orange: { border:'rgba(249,115,22,0.15)',  active:'rgba(249,115,22,0.6)',  hover:'rgba(249,115,22,0.55)',  shadow:'rgba(249,115,22,0.18)'  },
-  yellow: { border:'rgba(245,200,66,0.15)',  active:'rgba(245,200,66,0.6)',  hover:'rgba(245,200,66,0.55)',  shadow:'rgba(245,200,66,0.18)'  },
-  indigo: { border:'rgba(129,140,248,0.15)', active:'rgba(129,140,248,0.6)', hover:'rgba(129,140,248,0.55)', shadow:'rgba(129,140,248,0.18)' },
-  amber:  { border:'rgba(251,146,60,0.15)',  active:'rgba(251,146,60,0.6)',  hover:'rgba(251,146,60,0.55)',  shadow:'rgba(251,146,60,0.18)'  },
-  white:  { border:'rgba(255,255,255,0.1)',  active:'rgba(255,255,255,0.3)', hover:'rgba(255,255,255,0.28)', shadow:'rgba(255,255,255,0.06)' },
-};
-
-// ─── MetricCard — pixel-matches the real .metric-card CSS ────────────────────
+// ─── MetricCard — uses the EXACT same CSS classes as the real dashboard ───────
+// .metric-card .glow-* .active-filter are all defined in index.css.
+// CSS ::before handles the top shine line. CSS :hover handles the lift effect.
 function MetricCard({ label, value, color, glow = 'white', onClick, active, note, badge }) {
-  const [hov, setHov] = useState(false);
-  const g = GLOW[glow] || GLOW.white;
-  const borderColor = active ? g.active : hov && onClick ? g.hover : g.border;
-  const shadow = hov && onClick ? `0 20px 60px ${g.shadow}, 0 0 0 1px ${g.border}, 0 4px 20px rgba(0,0,0,0.5)` : 'none';
-  const bgColor = active ? `${g.shadow.replace('0.18','0.05').replace('0.06','0.02')}` : C.surface;
-
   return (
     <div
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
+      className={`metric-card clickable glow-${glow}${active ? ' active-filter' : ''}`}
       onClick={onClick}
-      style={{
-        padding:'26px 22px', borderRadius:18,
-        background: bgColor,
-        border:`1px solid ${borderColor}`,
-        boxShadow: shadow,
-        display:'flex', flexDirection:'column', gap:4,
-        cursor: onClick ? 'pointer' : 'default',
-        transition:'box-shadow 0.35s, border-color 0.35s, transform 0.35s cubic-bezier(0.23,1,0.32,1)',
-        transform: hov && onClick ? 'translateY(-4px)' : 'none',
-        position:'relative', overflow:'hidden',
-      }}
+      style={{ position:'relative', overflow:'hidden' }}
     >
       {badge && <div style={{ position:'absolute', top:8, right:8, width:6, height:6, borderRadius:'50%', background:'#fbbf24', boxShadow:'0 0 8px #fbbf24', animation:'pulseY 2s infinite' }} />}
-      {/* top shine line */}
-      <div style={{ position:'absolute', top:0, left:'10%', right:'10%', height:1, background:'linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent)', pointerEvents:'none' }} />
-      <div style={{ fontSize:11, color:C.textMuted, textTransform:'uppercase', fontWeight:700, letterSpacing:'1px', fontFamily:'Inter,sans-serif' }}>{label}</div>
-      <div style={{ fontSize:34, fontWeight:800, letterSpacing:'-2px', marginTop:6, lineHeight:1, color: color || C.textMain, fontFamily:'Outfit,sans-serif' }}>{value}</div>
-      {note && <div style={{ fontSize:11, color:C.textDim, marginTop:8 }}>{note}</div>}
+      <div className="metric-label">{label}</div>
+      <div className="metric-value" style={color ? { color } : {}}>{value}</div>
+      {note && <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:6, opacity:0.7 }}>{note}</div>}
     </div>
   );
 }
@@ -306,15 +276,12 @@ function DemoDaily() {
           const isP = day.net >= 0;
           const filter = activeFilter[day.date];
           return (
-            <div key={day.date}
-              style={{ borderRadius:18, padding:26, background:'rgba(15,15,26,0.65)', backdropFilter:'blur(20px)', border:'1px solid rgba(255,255,255,0.07)', boxShadow:'0 8px 32px rgba(0,0,0,0.3)', transition:'border-color 0.3s,box-shadow 0.3s' }}
-              onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.12)'; e.currentTarget.style.boxShadow='0 16px 48px rgba(0,0,0,0.4)';}}
-              onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'; e.currentTarget.style.boxShadow='0 8px 32px rgba(0,0,0,0.3)';}}>
+            <div key={day.date} className="day-block">
 
-              {/* Day header */}
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid rgba(255,255,255,0.06)', paddingBottom:16, marginBottom:22, flexWrap:'wrap', gap:8 }}>
-                <h2 style={{ margin:0, fontSize:21, fontWeight:800, color:C.textMain, fontFamily:'Outfit,sans-serif', letterSpacing:'-0.3px' }}>{day.label}</h2>
-                <div style={{ display:'flex', gap:10 }}>
+              {/* Day header — uses real .day-header .day-actions CSS classes */}
+              <div className="day-header" style={{ flexWrap:'wrap', gap:8 }}>
+                <h2>{day.label}</h2>
+                <div className="day-actions">
                   <span style={{ fontSize:14, padding:'5px 14px', borderRadius:999, background:'rgba(167,139,250,0.2)', color:'#c4b5fd', border:'1px solid rgba(167,139,250,0.4)', fontWeight:600 }}>CPP: {fmt(day.cpp)}</span>
                   <span style={{ fontSize:14, padding:'5px 14px', borderRadius:999, fontWeight:700,
                     background: isP ? 'rgba(16,185,129,0.2)' : 'rgba(244,63,94,0.2)',
@@ -324,8 +291,8 @@ function DemoDaily() {
                 </div>
               </div>
 
-              {/* Metrics grid — matches .metrics-grid CSS */}
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:18, marginBottom:0 }}>
+              {/* Metrics grid — EXACT real .metrics-grid CSS: minmax(210px,1fr) gap:18px */}
+              <div className="metrics-grid" style={{ marginBottom:0 }}>
                 <MetricCard label="Orders"              value={day.orders}          glow="white"  onClick={() => toggleFilter(day.date,'orders')}    active={filter==='orders'} />
                 <MetricCard label="Number of Items"     value={day.items}            glow="white"  note="Click to see breakdown" />
                 <MetricCard label="CPP"                 value={fmt(day.cpp)}         glow="white"  note="Click for breakdown" />
