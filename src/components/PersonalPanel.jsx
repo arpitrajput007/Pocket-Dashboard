@@ -295,7 +295,6 @@ function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
 }
 
 import ConnectShopifyStep from './ConnectShopifyStep';
-import SyncProgressDrawer from './SyncProgressDrawer';
 
 /* ─────────────────────────────────────────────
    CONNECTED STORE PANEL — shown on "Connect your Store" tab when already connected
@@ -1131,8 +1130,6 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
         />
       </Suspense>
 
-      {/* Live sync progress drawer — floats over all pages */}
-      {store?.id && <SyncProgressDrawer storeId={store.id} />}
 
     </>
   );

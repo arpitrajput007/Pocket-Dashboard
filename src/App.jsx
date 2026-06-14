@@ -38,6 +38,7 @@ const Landing = lazy(() => import('./components/Landing'));
 const Login = lazy(() => import('./components/Login'));
 const Signup = lazy(() => import('./components/Signup'));
 const PersonalPanel = lazy(() => import('./components/PersonalPanel'));
+const DemoPage = lazy(() => import('./components/DemoPage'));
 const PrivacyPolicy = lazy(() => import('./components/PrivacyPolicy'));
 const TermsAndConditions = lazy(() => import('./components/TermsAndConditions'));
 const ContactPage = lazy(() => import('./components/ContactPage'));
@@ -247,6 +248,7 @@ export default function App() {
             path="/signup"
             element={session ? <Navigate to="/dashboard" /> : <Signup />}
           />
+          <Route path="/demo" element={<DemoPage />} />
           <Route
             path="/dashboard"
             element={session ? <PersonalPanel session={session} store={store} onStoreConnected={refreshStore} /> : <Navigate to="/login" />}

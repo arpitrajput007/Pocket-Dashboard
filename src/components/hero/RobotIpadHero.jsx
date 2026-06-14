@@ -176,7 +176,7 @@ export default function RobotIpadHero() {
                 data-testid="hero-cta-primary"
                 className="relative inline-flex items-center gap-2 px-5 py-3 rounded-full brand-gradient text-black font-semibold text-[14px] overflow-hidden shine"
               >
-                Start Your 14-Day Free Trial
+                Free for 3 Months
                 <svg
                   width="16"
                   height="16"
@@ -194,7 +194,7 @@ export default function RobotIpadHero() {
                 </svg>
               </a>
               <a
-                href="#demo"
+                href="/demo"
                 data-testid="hero-cta-secondary"
                 className="inline-flex items-center gap-2 px-5 py-3 rounded-full border border-white/15 text-white/90 text-[14px] font-medium hover:bg-white/[0.04] transition"
               >
