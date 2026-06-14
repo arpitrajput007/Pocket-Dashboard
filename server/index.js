@@ -1345,24 +1345,28 @@ app.get('/api/admin/stores', verifyAdminToken, async (req, res) => {
   }
 });
 
-// ── Email helper ──────────────────────────────────────────────────────────────
+// ── Email helper (Namecheap Private Email — mail.privateemail.com) ───────────
 function createMailTransport() {
-  const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
+  const user = process.env.EMAIL_USER;  // e.g. business@pocketdashboard.app
+  const pass = process.env.EMAIL_PASSWORD;  // Namecheap email account password
   if (!user || !pass) return null;
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'mail.privateemail.com',
+    port: 587,
+    secure: false,          // STARTTLS on port 587
     auth: { user, pass },
+    tls: { rejectUnauthorized: false },
   });
 }
 
 async function sendAdminEmail({ subject, html }) {
-  const to = process.env.ADMIN_NOTIFY_EMAIL || process.env.GMAIL_USER;
-  if (!to) return;
+  const from = process.env.EMAIL_USER;
+  const to   = process.env.ADMIN_NOTIFY_EMAIL || from;
+  if (!to || !from) return;
   const transport = createMailTransport();
-  if (!transport) { console.warn('[Email] GMAIL_USER / GMAIL_APP_PASSWORD not set — skipping email'); return; }
+  if (!transport) { console.warn('[Email] EMAIL_USER / EMAIL_PASSWORD not set — skipping email'); return; }
   try {
-    await transport.sendMail({ from: `"Pocket Dashboard" <${process.env.GMAIL_USER}>`, to, subject, html });
+    await transport.sendMail({ from: `"Pocket Dashboard" <${from}>`, to, subject, html });
     console.log(`[Email] Sent: ${subject}`);
   } catch (e) {
     console.error('[Email] Send failed:', e.message);
