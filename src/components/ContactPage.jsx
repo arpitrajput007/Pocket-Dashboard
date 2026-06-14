@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Clock, MessageSquare, ArrowLeft, ArrowRight, Shield, ExternalLink } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 
