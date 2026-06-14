@@ -206,11 +206,22 @@ export default function App() {
     );
     if (!isAdminEmail(session.user.email)) {
       return (
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'100vh', background:'#07070e', color:'#e2e8f0', fontFamily:'Outfit,sans-serif', gap:16 }}>
-          <div style={{ fontSize:32 }}>🔒</div>
-          <div style={{ fontSize:18, fontWeight:700 }}>Access Denied</div>
-          <div style={{ fontSize:13, color:'rgba(226,232,240,0.45)' }}>Your account does not have admin privileges.</div>
-          <a href="https://pocketdashboard.app/dashboard" style={{ marginTop:8, fontSize:13, color:'#a5b4fc' }}>← Back to Dashboard</a>
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'100vh', background:'#07070e', color:'#e2e8f0', fontFamily:'Outfit,sans-serif', gap:16, padding:24, textAlign:'center' }}>
+          <div style={{ fontSize:40 }}>🔒</div>
+          <div style={{ fontSize:20, fontWeight:700 }}>Access Denied</div>
+          <div style={{ fontSize:13, color:'rgba(226,232,240,0.45)', maxWidth:340 }}>
+            This account is not on the admin list.<br />
+            Logged in as: <strong style={{ color:'rgba(226,232,240,0.75)' }}>{session.user.email}</strong>
+          </div>
+          <div style={{ fontSize:12, color:'rgba(226,232,240,0.3)', maxWidth:380, lineHeight:1.6 }}>
+            Make sure this email is added to <code style={{ background:'rgba(255,255,255,0.06)', padding:'1px 5px', borderRadius:4, color:'#a5b4fc' }}>VITE_ADMIN_EMAILS</code> in Vercel and that Vercel has redeployed after the change.
+          </div>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            style={{ marginTop:8, padding:'10px 24px', borderRadius:10, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.05)', color:'#e2e8f0', fontSize:13, fontWeight:600, cursor:'pointer' }}
+          >
+            Sign out &amp; try another account
+          </button>
         </div>
       );
     }
