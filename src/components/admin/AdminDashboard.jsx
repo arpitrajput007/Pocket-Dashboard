@@ -95,15 +95,21 @@ export default function AdminDashboard({ session }) {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [apiError, setApiError] = useState(null);
 
   const fetchData = () => {
     const token = session?.access_token;
-    if (!token) { setLoading(false); return; }
+    if (!token) { setLoading(false); setApiError('No session token — try signing out and back in.'); return; }
     setLoading(true);
+    setApiError(null);
     fetch(`${API_URL}/api/admin/overview`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) { setOverview(d); setLastRefresh(new Date()); } })
-      .catch(() => {})
+      .then(async r => {
+        if (r.ok) return r.json();
+        const text = await r.text();
+        throw new Error(`HTTP ${r.status} — ${text}`);
+      })
+      .then(d => { setOverview(d); setLastRefresh(new Date()); })
+      .catch(e => setApiError(`${API_URL}/api/admin/overview → ${e.message}`))
       .finally(() => setLoading(false));
   };
 
@@ -274,6 +280,15 @@ export default function AdminDashboard({ session }) {
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
+
+      {/* API Error banner */}
+      {apiError && (
+        <div style={{ marginBottom: 16, padding: '12px 16px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', fontSize: 12, lineHeight: 1.6 }}>
+          <strong style={{ color: '#f87171' }}>⚠️ API Error — could not load data</strong><br />
+          <code style={{ fontSize: 11, color: 'rgba(252,165,165,0.7)', wordBreak: 'break-all' }}>{apiError}</code><br />
+          <button onClick={fetchData} style={{ marginTop: 8, padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#f87171', fontSize: 11, cursor: 'pointer' }}>Retry</button>
+        </div>
+      )}
 
       {/* KPI Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
