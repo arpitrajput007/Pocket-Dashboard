@@ -1269,7 +1269,26 @@ app.get('/api/admin/overview', verifyAdminToken, async (req, res) => {
 
     const lastSynced24h = stores?.filter(s => s.last_synced_at && new Date(s.last_synced_at) > new Date(now.getTime() - 86400000)).length || 0;
 
-    res.json({ totalStores, activeStores, shopifyConnected, shiprocketConnected, metaConnected, newToday, newThisMonth, monthlySignups, lastSynced24h });
+    // Plan breakdown (real)
+    const planBreakdown = { free: 0, starter: 0, pro: 0, enterprise: 0 };
+    stores?.forEach(s => {
+      const p = (s.plan_type || 'free').toLowerCase();
+      if (planBreakdown[p] !== undefined) planBreakdown[p]++;
+      else planBreakdown.free++;
+    });
+
+    // Recent 8 store signups for activity feed
+    const recentStores = [...(stores || [])]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 8)
+      .map(s => ({
+        store_name: s.store_name || 'Unnamed Store',
+        created_at: s.created_at,
+        plan_type: s.plan_type || 'free',
+        has_shopify: !!s.shopify_domain,
+      }));
+
+    res.json({ totalStores, activeStores, shopifyConnected, shiprocketConnected, metaConnected, newToday, newThisMonth, monthlySignups, lastSynced24h, planBreakdown, recentStores });
   } catch (err) {
     console.error('[Admin] Overview error:', err.message);
     res.status(500).json({ error: err.message });
