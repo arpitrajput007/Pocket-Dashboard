@@ -3,6 +3,7 @@ const cors = require('cors');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { OpenAI } = require('openai');
+const nodemailer = require('nodemailer');
 const { syncStoreData } = require('./syncService');
 const { connectShiprocket, syncShiprocketShipments, probeShiprocket } = require('./shiprocketSyncService');
 const { encrypt, decrypt } = require('./cryptoUtils');
@@ -1299,9 +1300,18 @@ app.get('/api/admin/stores', verifyAdminToken, async (req, res) => {
   try {
     const { data: stores, error } = await supabase
       .from('stores')
-      .select('id, store_name, shopify_domain, created_at, last_synced_at, plan_type, shiprocket_connected, is_active, products_synced_at, enabled_ad_platforms')
+      .select('id, owner_id, store_name, shopify_domain, created_at, last_synced_at, plan_type, shiprocket_connected, is_active, products_synced_at, enabled_ad_platforms')
       .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
+
+    // Fetch real owner emails from Supabase Auth using service role key
+    const emailMap = {};
+    try {
+      const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+      users?.forEach(u => { emailMap[u.id] = u.email || '—'; });
+    } catch (e) {
+      console.warn('[Admin] Could not fetch auth users for email map:', e.message);
+    }
 
     const { data: orderRows } = await supabase.from('orders').select('store_id');
     const orderCounts = {};
@@ -1324,6 +1334,8 @@ app.get('/api/admin/stores', verifyAdminToken, async (req, res) => {
       products_synced_at: s.products_synced_at,
       order_count: orderCounts[s.id] || 0,
       shipment_count: shipCounts[s.id] || 0,
+      // Real owner email from Supabase Auth
+      owner_email: emailMap[s.owner_id] || '—',
     }));
 
     res.json({ stores: enriched, total: enriched?.length || 0 });
@@ -1331,6 +1343,90 @@ app.get('/api/admin/stores', verifyAdminToken, async (req, res) => {
     console.error('[Admin] Stores error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Email helper ──────────────────────────────────────────────────────────────
+function createMailTransport() {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) return null;
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass },
+  });
+}
+
+async function sendAdminEmail({ subject, html }) {
+  const to = process.env.ADMIN_NOTIFY_EMAIL || process.env.GMAIL_USER;
+  if (!to) return;
+  const transport = createMailTransport();
+  if (!transport) { console.warn('[Email] GMAIL_USER / GMAIL_APP_PASSWORD not set — skipping email'); return; }
+  try {
+    await transport.sendMail({ from: `"Pocket Dashboard" <${process.env.GMAIL_USER}>`, to, subject, html });
+    console.log(`[Email] Sent: ${subject}`);
+  } catch (e) {
+    console.error('[Email] Send failed:', e.message);
+  }
+}
+
+// ── Supabase Webhook: new store signup ────────────────────────────────────────
+// Called by a Supabase Database Webhook on INSERT to public.stores
+// Secure with WEBHOOK_SECRET env var (set same value in Supabase webhook header)
+app.post('/api/admin/new-store-webhook', express.json(), async (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) {
+    return res.status(401).json({ error: 'Invalid webhook secret' });
+  }
+
+  const record = req.body?.record || req.body;
+  const storeName = record?.store_name || 'Unknown Store';
+  const shopifyDomain = record?.shopify_domain || '—';
+  const planType = record?.plan_type || 'free';
+  const createdAt = record?.created_at ? new Date(record.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'now';
+
+  // Get owner email if owner_id is present
+  let ownerEmail = '—';
+  if (record?.owner_id) {
+    try {
+      const { data: { user } } = await supabase.auth.admin.getUserById(record.owner_id);
+      ownerEmail = user?.email || '—';
+    } catch (e) { /* ignore */ }
+  }
+
+  console.log(`[Webhook] New store signup: ${storeName} (${ownerEmail})`);
+
+  await sendAdminEmail({
+    subject: `🚀 New Store Signup: ${storeName}`,
+    html: `
+      <div style="font-family:sans-serif;max-width:500px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:12px;overflow:hidden;border:1px solid #1e1e3a">
+        <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:20px 24px">
+          <h2 style="margin:0;color:#fff;font-size:18px">🚀 New Store Signup</h2>
+          <p style="margin:4px 0 0;color:rgba(255,255,255,0.7);font-size:13px">Pocket Dashboard — Mission Control Alert</p>
+        </div>
+        <div style="padding:24px">
+          <table style="width:100%;border-collapse:collapse">
+            ${[
+              ['Store Name', storeName],
+              ['Owner Email', ownerEmail],
+              ['Shopify Domain', shopifyDomain],
+              ['Plan', planType.toUpperCase()],
+              ['Signed Up', createdAt + ' IST'],
+            ].map(([k, v]) => `
+              <tr>
+                <td style="padding:8px 0;color:rgba(226,232,240,0.5);font-size:13px;width:40%">${k}</td>
+                <td style="padding:8px 0;color:#e2e8f0;font-size:13px;font-weight:600">${v}</td>
+              </tr>
+            `).join('')}
+          </table>
+          <a href="https://admin.pocketdashboard.app" style="display:inline-block;margin-top:16px;padding:10px 20px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:600">
+            Open Mission Control →
+          </a>
+        </div>
+      </div>
+    `,
+  });
+
+  res.json({ ok: true });
 });
 
 app.get('/api/admin/orders-summary', verifyAdminToken, async (req, res) => {
