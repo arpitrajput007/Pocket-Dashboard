@@ -1,6 +1,6 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { Shield, Clock, Lock, Database, Eye, Server, Users, FileText, Globe, Mail, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Shield, Clock, Lock, Database, Eye, Server, Users, FileText, Globe, Mail, ChevronRight, ArrowLeft } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 
 const sections = [
@@ -84,6 +84,7 @@ function Divider() {
 }
 
 export default function PrivacyPolicy() {
+  const navigate = useNavigate();
   return (
     <div style={{
       minHeight: '100vh',
@@ -101,9 +102,21 @@ export default function PrivacyPolicy() {
         borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '76px' }}>
-          <Link to="/" style={{ textDecoration: 'none', paddingTop: '14px' }}>
-            <BrandLogo variant="full" iconSize={40} />
-          </Link>
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '8px', padding: '6px 12px',
+              fontSize: '12px', color: '#94a3b8', cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#f8fafc'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#94a3b8'; }}
+          >
+            <ArrowLeft size={13} />
+            Back
+          </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#64748b' }}>
             <Shield size={13} style={{ color: '#6366f1' }} />
             Privacy Policy
