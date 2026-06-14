@@ -3,13 +3,64 @@ import { supabase } from './supabaseClient';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import BrandLogo from './components/BrandLogo';
 
+// ── Stale-chunk guard ─────────────────────────────────────────────────────────
+// After every Vercel deploy the JS chunk filenames change (content-hash).
+// Users who still have the old index.html cached in the browser try to load
+// chunk URLs that no longer exist → "Failed to fetch dynamically imported module".
+// Solution: intercept those errors before React even sees them and reload once.
+// We use sessionStorage so we never infinite-loop (only one auto-reload per tab).
+const CHUNK_ERR_PATTERNS = [
+  'Failed to fetch dynamically imported module',
+  'error loading dynamically imported module',
+  'Importing a module script failed',
+  'Unable to preload CSS',
+];
+const isChunkError = (msg = '') => CHUNK_ERR_PATTERNS.some(p => msg.includes(p));
+
+window.addEventListener('error', (e) => {
+  if (isChunkError(e?.message)) {
+    if (!sessionStorage.getItem('chunk_reload')) {
+      sessionStorage.setItem('chunk_reload', '1');
+      window.location.reload();
+    }
+  }
+}, true);
+
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = e?.reason?.message || String(e?.reason || '');
+  if (isChunkError(msg)) {
+    if (!sessionStorage.getItem('chunk_reload')) {
+      sessionStorage.setItem('chunk_reload', '1');
+      window.location.reload();
+    }
+  }
+});
+
+// Clear the reload guard on successful page load so future visits can auto-reload again
+window.addEventListener('load', () => {
+  sessionStorage.removeItem('chunk_reload');
+});
+
 // ── Error Boundary ────────────────────────────────────────────────────────────
 // Catches any JS crash inside the app and shows a helpful message instead of
 // a pure black screen with no feedback.
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
+
+  static getDerivedStateFromError(error) {
+    // Chunk-load failures → silent auto-reload (same guard as above, belt+suspenders)
+    if (isChunkError(error?.message)) {
+      if (!sessionStorage.getItem('chunk_reload')) {
+        sessionStorage.setItem('chunk_reload', '1');
+        window.location.reload();
+        return { error: null }; // keep rendering while reload fires
+      }
+    }
+    return { error };
+  }
+
   componentDidCatch(error, info) { console.error('[ErrorBoundary]', error, info); }
+
   render() {
     if (this.state.error) {
       return (
