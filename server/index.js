@@ -93,7 +93,11 @@ setInterval(() => {
 
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? ['https://pocketdashboard.app', 'https://www.pocketdashboard.app']
+    ? [
+        'https://pocketdashboard.app',
+        'https://www.pocketdashboard.app',
+        'https://admin.pocketdashboard.app',
+      ]
     : '*',
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
