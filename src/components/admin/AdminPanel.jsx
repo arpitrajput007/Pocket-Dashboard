@@ -84,7 +84,7 @@ export default function AdminPanel({ session }) {
   return (
     <div style={{
       display: 'flex', height: '100vh',
-      background: '#07070e',
+      background: '#0f0f1e',
       fontFamily: '"Outfit", "Inter", -apple-system, sans-serif',
       color: '#e2e8f0',
       overflow: 'hidden',
@@ -103,14 +103,14 @@ export default function AdminPanel({ session }) {
           0%,100% { box-shadow:0 0 6px rgba(16,185,129,0.4); }
           50% { box-shadow:0 0 12px rgba(16,185,129,0.7); }
         }
-        .admin-nav-btn:hover { background:rgba(255,255,255,0.04) !important; color:#e2e8f0 !important; }
-        .admin-row:hover { background:rgba(255,255,255,0.03) !important; }
-        .admin-card:hover { border-color:rgba(255,255,255,0.13) !important; background:rgba(255,255,255,0.04) !important; }
+        .admin-nav-btn:hover { background:rgba(255,255,255,0.07) !important; color:#e2e8f0 !important; }
+        .admin-row:hover { background:rgba(255,255,255,0.05) !important; }
+        .admin-card:hover { border-color:rgba(255,255,255,0.18) !important; background:rgba(255,255,255,0.07) !important; }
         .admin-action-btn:hover { opacity:1 !important; }
         ::-webkit-scrollbar { width:4px; height:4px; }
         ::-webkit-scrollbar-track { background:transparent; }
-        ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:4px; }
-        ::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,0.15); }
+        ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.14); border-radius:4px; }
+        ::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,0.22); }
       `}</style>
 
       {/* ── Sidebar ── */}
@@ -118,8 +118,8 @@ export default function AdminPanel({ session }) {
         width: sidebarOpen ? 232 : 0,
         minWidth: sidebarOpen ? 232 : 0,
         height: '100vh',
-        background: '#0a0a16',
-        borderRight: '1px solid rgba(255,255,255,0.065)',
+        background: '#13132a',
+        borderRight: '1px solid rgba(255,255,255,0.1)',
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
         transition: 'width 0.2s ease, min-width 0.2s ease',
@@ -243,9 +243,9 @@ export default function AdminPanel({ session }) {
           height: 52, flexShrink: 0,
           padding: '0 24px',
           display: 'flex', alignItems: 'center', gap: 10,
-          background: 'rgba(7,7,14,0.9)',
+          background: 'rgba(13,13,26,0.95)',
           backdropFilter: 'blur(16px)',
-          borderBottom: '1px solid rgba(255,255,255,0.055)',
+          borderBottom: '1px solid rgba(255,255,255,0.09)',
           zIndex: 50,
         }}>
           <button
