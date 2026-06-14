@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, Clock, MessageSquare, Building2, ArrowRight, Shield, ExternalLink } from 'lucide-react';
+import { Mail, MessageSquare, ArrowRight, Shield, ExternalLink } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 
 export default function ContactPage() {
@@ -55,99 +55,45 @@ export default function ContactPage() {
             </h1>
 
             <p style={{ fontSize: '17px', color: '#94a3b8', lineHeight: 1.75, maxWidth: '500px', margin: '0 auto' }}>
-              Whether it's a product question, partnership inquiry, or support request — our team responds fast.
+              For any query, write to us on our business email only.
             </p>
           </div>
 
-          {/* Contact Cards Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '40px' }}>
-
-            {/* General Support */}
+          {/* Business Email Card — centered */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '40px' }}>
             <div style={{
               background: 'rgba(255,255,255,0.02)',
               border: '1px solid rgba(255,255,255,0.07)',
-              borderRadius: '20px', padding: '28px',
+              borderRadius: '20px', padding: '40px 48px',
               transition: 'border-color 0.2s ease',
-            }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(99,102,241,0.3)'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
-            >
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: '44px', height: '44px', borderRadius: '12px', marginBottom: '20px',
-                background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)',
-              }}>
-                <Mail size={20} style={{ color: '#818cf8' }} />
-              </div>
-              <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#f8fafc', marginBottom: '8px' }}>General Support</h3>
-              <p style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.6, marginBottom: '20px' }}>
-                Questions about your dashboard, integrations, or account.
-              </p>
-              <a href="mailto:support@pocketdashboard.app" style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                fontSize: '13px', fontWeight: 600, color: '#818cf8', textDecoration: 'none',
-              }}>
-                support@pocketdashboard.app
-                <ExternalLink size={12} />
-              </a>
-            </div>
-
-            {/* Business Inquiries */}
-            <div style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.07)',
-              borderRadius: '20px', padding: '28px',
-              transition: 'border-color 0.2s ease',
+              maxWidth: '420px', width: '100%', textAlign: 'center',
             }}
               onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)'}
               onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
             >
               <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: '44px', height: '44px', borderRadius: '12px', marginBottom: '20px',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: '56px', height: '56px', borderRadius: '16px', marginBottom: '24px',
                 background: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.2)',
               }}>
-                <Building2 size={20} style={{ color: '#22d3ee' }} />
+                <Mail size={24} style={{ color: '#22d3ee' }} />
               </div>
-              <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#f8fafc', marginBottom: '8px' }}>Business Inquiries</h3>
-              <p style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.6, marginBottom: '20px' }}>
-                Partnerships, enterprise plans, custom setups, or press inquiries.
+              <h3 style={{ fontSize: '17px', fontWeight: 600, color: '#f8fafc', marginBottom: '10px' }}>Business Email</h3>
+              <p style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.6, marginBottom: '24px' }}>
+                For any query — support, partnerships, enterprise plans, or press — reach out on our business email.
               </p>
               <a href="mailto:business@pocketdashboard.app" style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                fontSize: '13px', fontWeight: 600, color: '#22d3ee', textDecoration: 'none',
-              }}>
+                display: 'inline-flex', alignItems: 'center', gap: '8px',
+                fontSize: '15px', fontWeight: 700, color: '#22d3ee', textDecoration: 'none',
+                letterSpacing: '-0.01em',
+              }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >
                 business@pocketdashboard.app
-                <ExternalLink size={12} />
+                <ExternalLink size={14} />
               </a>
             </div>
-
-            {/* Support Hours */}
-            <div style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.07)',
-              borderRadius: '20px', padding: '28px',
-              transition: 'border-color 0.2s ease',
-            }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(16,185,129,0.3)'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
-            >
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: '44px', height: '44px', borderRadius: '12px', marginBottom: '20px',
-                background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
-              }}>
-                <Clock size={20} style={{ color: '#10b981' }} />
-              </div>
-              <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#f8fafc', marginBottom: '8px' }}>Support Hours</h3>
-              <p style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.6, marginBottom: '20px' }}>
-                Our team is available during business hours to assist you.
-              </p>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: '#10b981' }}>
-                Mon – Sat · 10:00 AM – 7:00 PM IST
-              </div>
-            </div>
-
           </div>
 
           {/* Response time note */}
