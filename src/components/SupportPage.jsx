@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MessageCircle, Mail, ChevronDown } from 'lucide-react';
+import { Mail, ChevronDown } from 'lucide-react';
 
 const FAQ = [
   {
@@ -68,40 +68,22 @@ export default function SupportPage({ session }) {
         </p>
       </div>
 
-      {/* Contact channels */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 24 }}>
-        <a
-          href="https://wa.me/917999999999?text=Hi%2C%20I%20need%20help%20with%20Pocket%20Dashboard"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, padding: '20px 22px', background: 'rgba(37,211,102,0.07)', border: '1px solid rgba(37,211,102,0.25)', borderRadius: 16, textDecoration: 'none', transition: 'all 0.2s', cursor: 'pointer' }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(37,211,102,0.12)'; e.currentTarget.style.borderColor = 'rgba(37,211,102,0.4)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(37,211,102,0.07)'; e.currentTarget.style.borderColor = 'rgba(37,211,102,0.25)'; }}
-        >
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(37,211,102,0.15)', border: '1px solid rgba(37,211,102,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <MessageCircle size={20} color="#25d366" />
-          </div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#25d366', marginBottom: 3 }}>WhatsApp</div>
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>Fastest response. Most queries answered within the hour.</div>
-          </div>
-          <div style={{ fontSize: 11.5, color: 'rgba(37,211,102,0.7)', fontWeight: 600, marginTop: 2 }}>Open WhatsApp →</div>
-        </a>
-
+      {/* Contact channel */}
+      <div style={{ marginBottom: 24 }}>
         <a
           href="mailto:support@pocketdashboard.app"
-          style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, padding: '20px 22px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 16, textDecoration: 'none', transition: 'all 0.2s' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '22px 28px', background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 16, textDecoration: 'none', transition: 'all 0.2s' }}
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.12)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.4)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.07)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.25)'; }}
         >
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Mail size={20} color="#818cf8" />
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Mail size={22} color="#818cf8" />
           </div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#818cf8', marginBottom: 3 }}>Email</div>
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>support@pocketdashboard.app — replies within 24 hours.</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#818cf8', marginBottom: 4 }}>Email Support</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)', lineHeight: 1.5 }}>support@pocketdashboard.app — we reply within 24 hours, usually much faster.</div>
           </div>
-          <div style={{ fontSize: 11.5, color: 'rgba(99,102,241,0.7)', fontWeight: 600, marginTop: 2 }}>Send Email →</div>
+          <div style={{ fontSize: 12, color: 'rgba(99,102,241,0.7)', fontWeight: 600, whiteSpace: 'nowrap' }}>Send Email →</div>
         </a>
       </div>
 

@@ -3,7 +3,8 @@ import { supabase } from '../supabaseClient';
 import {
   LayoutDashboard, Calendar, CalendarDays, BarChart2,
   TrendingUp, Trophy, CheckCircle2, Save, RefreshCw,
-  AlertCircle, Sparkles, ChevronRight, Truck, X, Plug
+  AlertCircle, Sparkles, ChevronRight, Truck, X, Plug,
+  Users, UserPlus, Trash2, IndianRupee, Percent
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -181,9 +182,19 @@ function FeatureCard({ feature, enabled, onToggle }) {
 /* ─────────────────────────────────────────────
    MAIN COMPONENT
 ───────────────────────────────────────────── */
+const DEFAULT_COST_CONFIG = {
+  cost_shipping_default: 135,
+  cost_cod_charge: 29,
+  cost_gateway_fee_pct: 2,
+  cost_shopify_monthly: 0,
+};
+
 export default function AdvancedSettings({ store }) {
   const [features, setFeatures] = useState(DEFAULT_FEATURES);
   const [adPlatforms, setAdPlatforms] = useState(DEFAULT_AD_PLATFORMS);
+  const [costConfig, setCostConfig] = useState(DEFAULT_COST_CONFIG);
+  const [collaboratorEmails, setCollaboratorEmails] = useState([]);
+  const [newCollabEmail, setNewCollabEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
@@ -350,13 +361,22 @@ export default function AdvancedSettings({ store }) {
   // Load existing settings from Supabase on mount
   useEffect(() => {
     if (!store?.id) { setLoading(false); return; }
-    const saved = store?.dashboard_features;
-    if (saved && typeof saved === 'object') {
-      setFeatures({ ...DEFAULT_FEATURES, ...saved });
+    const df = store?.dashboard_features;
+    if (df && typeof df === 'object') {
+      setFeatures({ ...DEFAULT_FEATURES, ...df });
+      setCostConfig({
+        cost_shipping_default: df.cost_shipping_default ?? DEFAULT_COST_CONFIG.cost_shipping_default,
+        cost_cod_charge:       df.cost_cod_charge       ?? DEFAULT_COST_CONFIG.cost_cod_charge,
+        cost_gateway_fee_pct:  df.cost_gateway_fee_pct  ?? DEFAULT_COST_CONFIG.cost_gateway_fee_pct,
+        cost_shopify_monthly:  df.cost_shopify_monthly  ?? DEFAULT_COST_CONFIG.cost_shopify_monthly,
+      });
     }
     const platforms = store?.enabled_ad_platforms;
     if (Array.isArray(platforms) && platforms.length > 0) {
       setAdPlatforms(platforms);
+    }
+    if (Array.isArray(store?.collaborator_emails)) {
+      setCollaboratorEmails(store.collaborator_emails);
     }
     setLoading(false);
   }, [store]);
@@ -385,7 +405,11 @@ export default function AdvancedSettings({ store }) {
 
     const { error: err } = await supabase
       .from('stores')
-      .update({ dashboard_features: features, enabled_ad_platforms: adPlatforms })
+      .update({
+        dashboard_features: { ...features, ...costConfig },
+        enabled_ad_platforms: adPlatforms,
+        collaborator_emails: collaboratorEmails,
+      })
       .eq('id', store.id);
 
     setSaving(false);
@@ -395,6 +419,20 @@ export default function AdvancedSettings({ store }) {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     }
+  };
+
+  const addCollaborator = () => {
+    const email = newCollabEmail.trim().toLowerCase();
+    if (!email || !email.includes('@')) return;
+    if (collaboratorEmails.includes(email)) return;
+    setCollaboratorEmails(prev => [...prev, email]);
+    setNewCollabEmail('');
+    setSaved(false);
+  };
+
+  const removeCollaborator = (email) => {
+    setCollaboratorEmails(prev => prev.filter(e => e !== email));
+    setSaved(false);
   };
 
   const handleEnableAll = () => {
@@ -653,6 +691,121 @@ export default function AdvancedSettings({ store }) {
             </div>
           );
         })}
+      </div>
+
+      {/* ── Cost Configuration ─────────────────────────────────────── */}
+      <div style={{ marginTop: '36px', marginBottom: '14px' }}>
+        <h3 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '18px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0', letterSpacing: '-0.2px' }}>
+          Cost Configuration
+        </h3>
+        <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+          Set your actual costs per order. These values are used to compute accurate net profit in Product Analytics.
+        </p>
+      </div>
+      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 20, padding: '24px 28px', marginBottom: '8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          {[
+            { key: 'cost_shipping_default', label: 'Default shipping cost', sub: 'Per fulfilled order (₹)', icon: <IndianRupee size={14} color="rgba(56,189,248,0.8)" /> },
+            { key: 'cost_cod_charge', label: 'COD handling charge', sub: 'Per COD order (₹)', icon: <IndianRupee size={14} color="rgba(251,191,36,0.8)" /> },
+            { key: 'cost_gateway_fee_pct', label: 'Payment gateway fee', sub: 'On prepaid orders (%)', icon: <Percent size={14} color="rgba(167,139,250,0.8)" /> },
+            { key: 'cost_shopify_monthly', label: 'Shopify monthly plan', sub: 'Flat monthly fee (₹)', icon: <IndianRupee size={14} color="rgba(52,211,153,0.8)" /> },
+          ].map(({ key, label, sub, icon }) => (
+            <div key={key}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.55)', marginBottom: '8px' }}>
+                {icon} {label}
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, transition: 'border-color 0.2s' }}
+                onFocus={() => {}} >
+                <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)' }}>{key.includes('fee_pct') ? '%' : '₹'}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step={key.includes('fee_pct') ? '0.1' : '1'}
+                  value={costConfig[key]}
+                  onChange={e => { setCostConfig(prev => ({ ...prev, [key]: e.target.value })); setSaved(false); }}
+                  style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#e2e8f0', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit', minWidth: 0 }}
+                />
+              </div>
+              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)', marginTop: '4px' }}>{sub}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: '16px', padding: '12px 14px', background: 'rgba(56,189,248,0.05)', border: '1px solid rgba(56,189,248,0.12)', borderRadius: 10 }}>
+          <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.4)', lineHeight: 1.7 }}>
+            <strong style={{ color: 'rgba(56,189,248,0.7)' }}>How these work:</strong> Shipping cost applies when no per-product cost is set. COD charge and gateway fee are not yet auto-applied to per-day views — use them as a reference until the full integration ships.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Team Access ────────────────────────────────────────────── */}
+      <div style={{ marginTop: '36px', marginBottom: '14px' }}>
+        <h3 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '18px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0', letterSpacing: '-0.2px' }}>
+          Team Access
+        </h3>
+        <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+          Invite your CA, business partner, or VA to view this store's dashboard. Collaborators get read-only access — they cannot modify settings or disconnect the store.
+        </p>
+      </div>
+      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 20, padding: '24px 28px' }}>
+        {/* Current collaborators */}
+        {collaboratorEmails.length > 0 && (
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>
+              Current team members
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {collaboratorEmails.map(email => (
+                <div key={email} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#818cf8', flexShrink: 0 }}>
+                    {email[0].toUpperCase()}
+                  </div>
+                  <span style={{ flex: 1, fontSize: '13.5px', color: '#e2e8f0', fontWeight: 500 }}>{email}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(99,102,241,0.7)', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 999, padding: '2px 9px' }}>View only</span>
+                  <button onClick={() => removeCollaborator(email)} style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(251,113,133,0.08)', border: '1px solid rgba(251,113,133,0.15)', color: '#fb7185', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.2s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(251,113,133,0.15)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(251,113,133,0.08)'; }}>
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {collaboratorEmails.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px', marginBottom: '20px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 12 }}>
+            <Users size={18} color="rgba(255,255,255,0.2)" />
+            <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)' }}>No team members yet. Add someone below.</span>
+          </div>
+        )}
+        {/* Add collaborator */}
+        <div>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>
+            Add team member
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10 }}>
+              <UserPlus size={15} color="rgba(255,255,255,0.3)" />
+              <input
+                type="email"
+                value={newCollabEmail}
+                onChange={e => setNewCollabEmail(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addCollaborator()}
+                placeholder="teammate@email.com"
+                style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#e2e8f0', fontSize: '14px', fontFamily: 'inherit' }}
+              />
+            </div>
+            <button
+              onClick={addCollaborator}
+              disabled={!newCollabEmail.includes('@')}
+              style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: newCollabEmail.includes('@') ? 'linear-gradient(135deg,#6366f1,#4f46e5)' : 'rgba(255,255,255,0.06)', color: newCollabEmail.includes('@') ? '#fff' : '#475569', fontSize: '13.5px', fontWeight: 700, cursor: newCollabEmail.includes('@') ? 'pointer' : 'not-allowed', fontFamily: 'inherit', transition: 'all 0.2s', whiteSpace: 'nowrap' }}
+            >
+              Add
+            </button>
+          </div>
+          <p style={{ margin: '10px 0 0', fontSize: '12px', color: 'rgba(255,255,255,0.25)', lineHeight: 1.5 }}>
+            The person must sign up at pocketdashboard.app with this exact email to access the store. Click <strong style={{ color: 'rgba(255,255,255,0.4)' }}>Save Settings</strong> to apply.
+          </p>
+        </div>
       </div>
 
       {/* ── Shipping Integration (Shiprocket) — bottom of page ─────── */}

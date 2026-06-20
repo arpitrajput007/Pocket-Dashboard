@@ -52,6 +52,18 @@ export function parseDateStr(s) {
 // Loads the cost-history rows for a store and returns them grouped by product_id,
 // each group sorted newest-first. Fails soft to {} so the dashboard still works
 // before the migration is run.
+// Returns the store owner's configured costs, falling back to safe defaults.
+// Reads from store.dashboard_features (saved by AdvancedSettings cost config section).
+export function getStoreCosts(store) {
+  const df = store?.dashboard_features || {};
+  return {
+    shippingCost:   parseFloat(df.cost_shipping_default  ?? 135),
+    codCharge:      parseFloat(df.cost_cod_charge        ?? 29),
+    gatewayFeePct:  parseFloat(df.cost_gateway_fee_pct   ?? 2) / 100,
+    shopifyMonthly: parseFloat(df.cost_shopify_monthly   ?? 0),
+  };
+}
+
 export async function loadCostHistory(supabase, storeId) {
   if (!supabase || !storeId) return {};
   try {

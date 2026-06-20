@@ -938,10 +938,13 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
           50% { opacity: 1; }
         }
         @media (max-width: 768px) {
-          .panel-sidebar { position: fixed; left: 0; top: 0; bottom: 0; transform: translateX(-100%); }
-          .panel-sidebar.open { transform: translateX(0); }
+          .panel-sidebar { position: fixed; left: 0; top: 0; bottom: 0; transform: translateX(-100%); z-index: 20; }
+          .panel-sidebar.open { transform: translateX(0); box-shadow: 8px 0 40px rgba(0,0,0,0.5); }
           .sidebar-overlay.visible { display: block; }
           .mobile-menu-btn-wrap { display: flex !important; }
+          .panel-topbar { padding: 0 16px; height: 56px; }
+          .panel-content { padding: 16px; }
+          .panel-shell { flex-direction: column; }
         }
       `}</style>
 

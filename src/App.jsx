@@ -224,6 +224,25 @@ export default function App() {
           document.documentElement.style.setProperty('--primary-gradient', `linear-gradient(135deg, ${data.primary_color} 0%, #111 100%)`);
         }
       } else {
+        // No owned store — check if they're a collaborator on someone else's store
+        try {
+          const userEmail = (await supabase.auth.getUser()).data?.user?.email;
+          if (userEmail) {
+            const { data: collabStore } = await supabase
+              .from('stores')
+              .select('*')
+              .contains('collaborator_emails', [userEmail])
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (collabStore) {
+              console.log('[checkOnboarding] Collaborator store found:', collabStore.store_name);
+              setStore(collabStore);
+              return;
+            }
+          }
+        } catch (_) { /* collaborator_emails column may not exist yet — ignore */ }
+
         console.log('[checkOnboarding] No store found for userId:', userId);
         setStore(null);
       }

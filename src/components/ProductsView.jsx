@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import {
   Search, Eye, EyeOff, TrendingUp, TrendingDown,
-  Package, RefreshCw, Download, AlertCircle, ChevronDown, ChevronUp
+  Package, RefreshCw, Download, AlertCircle, ChevronDown, ChevronUp, Upload
 } from 'lucide-react';
-import { loadCostHistory, effectiveCostPrice, effectiveShippingCost } from '../utils/dashboardUtils';
+import { loadCostHistory, effectiveCostPrice, effectiveShippingCost, getStoreCosts } from '../utils/dashboardUtils';
 
 const fmt = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
 
@@ -45,6 +45,12 @@ export default function ProductsView({ store, refreshTrigger }) {
   const [sortCol, setSortCol] = useState('revenue');
   const [sortDir, setSortDir] = useState('desc');
   const [fetched, setFetched] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const csvImportRef = useRef(null);
+
+  // Store-configured cost defaults
+  const storeCosts = useMemo(() => getStoreCosts(store), [store]);
 
   useEffect(() => {
     if (store?.id) {
@@ -95,8 +101,8 @@ export default function ProductsView({ store, refreshTrigger }) {
           const qty = item.quantity || 0;
           // Cost effective on the order date (dated cost history when present).
           const p = pricing[title] || pricing[item.sku] || {};
-          const cp = effectiveCostPrice(p._costHistory, orderDate, parseFloat(p.cost_price ?? 555));
-          const ship = effectiveShippingCost(p._costHistory, orderDate, parseFloat(p.shipping_cost ?? 135));
+          const cp = effectiveCostPrice(p._costHistory, orderDate, parseFloat(p.cost_price ?? 0));
+          const ship = effectiveShippingCost(p._costHistory, orderDate, parseFloat(p.shipping_cost ?? storeCosts.shippingCost));
           stats[title].revenue += qty * parseFloat(item.price || 0);
           stats[title].delivered += qty;
           stats[title].cost += qty * (cp + ship);
@@ -107,8 +113,8 @@ export default function ProductsView({ store, refreshTrigger }) {
     return Object.values(stats).map(s => {
       const p = pricing[s.title] || pricing[s.sku] || {};
       // Display columns show the current/latest cost; `s.cost` is the date-accurate total.
-      const cp = parseFloat(p.cost_price ?? 555);
-      const ship = parseFloat(p.shipping_cost ?? 135);
+      const cp = parseFloat(p.cost_price ?? 0);
+      const ship = parseFloat(p.shipping_cost ?? storeCosts.shippingCost);
       const cost = s.cost;
       const profit = s.revenue - cost;
       const margin = s.revenue > 0 ? (profit / s.revenue * 100) : 0;
@@ -147,6 +153,66 @@ export default function ProductsView({ store, refreshTrigger }) {
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
     else { setSortCol(col); setSortDir('desc'); }
+  }
+
+  function downloadCostTemplate() {
+    const csv = 'SKU,Product Title,Cost Price (INR),Shipping Cost (INR)\nSKU001,Example T-Shirt,250,135\nSKU002,Example Hoodie Pack,450,160\n';
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'cost_import_template.csv'; a.click();
+  }
+
+  async function handleCostImport(e) {
+    const file = e.target.files?.[0];
+    if (!file || !store?.id) return;
+    e.target.value = '';
+
+    let text;
+    try { text = await file.text(); } catch { return; }
+
+    const lines = text.trim().split(/\r?\n/).filter(Boolean);
+    if (lines.length < 2) { alert('CSV is empty or has no data rows.'); return; }
+
+    const header = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
+    const skuIdx  = header.findIndex(h => h.includes('sku'));
+    const titleIdx = header.findIndex(h => h.includes('title') || h.includes('product'));
+    const cpIdx   = header.findIndex(h => h.includes('cost') && !h.includes('shipping'));
+    const shipIdx = header.findIndex(h => h.includes('shipping'));
+
+    if (cpIdx === -1) { alert('CSV must have a "Cost Price" column.'); return; }
+
+    setImporting(true);
+
+    // Fetch all current products for this store to match rows by SKU / title
+    const { data: existingProducts } = await supabase
+      .from('products').select('id, sku, title').eq('store_id', store.id);
+
+    let updated = 0, skipped = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+      const sku   = skuIdx  >= 0 ? cols[skuIdx]  : '';
+      const title = titleIdx >= 0 ? cols[titleIdx] : '';
+      const cp    = parseFloat(cols[cpIdx]);
+      const ship  = shipIdx >= 0 ? parseFloat(cols[shipIdx]) : null;
+
+      if (isNaN(cp)) { skipped++; continue; }
+
+      const match = (existingProducts || []).find(p =>
+        (sku   && p.sku   && p.sku.toLowerCase()   === sku.toLowerCase()) ||
+        (title && p.title && p.title.toLowerCase() === title.toLowerCase())
+      );
+      if (!match) { skipped++; continue; }
+
+      const patch = { cost_price: cp };
+      if (ship != null && !isNaN(ship) && ship >= 0) patch.shipping_cost = ship;
+      const { error: ue } = await supabase.from('products').update(patch).eq('id', match.id);
+      if (!ue) updated++; else skipped++;
+    }
+
+    await loadPricing();
+    setImporting(false);
+    setImportResult({ updated, skipped });
+    setTimeout(() => setImportResult(null), 6000);
   }
 
   function exportCSV() {
@@ -203,6 +269,26 @@ export default function ProductsView({ store, refreshTrigger }) {
             {showHidden ? <Eye size={15}/> : <EyeOff size={15}/>}
             {showHidden ? 'Showing Hidden' : `Hidden (${hiddenCount})`}
           </button>
+
+          {/* Hidden CSV file input */}
+          <input ref={csvImportRef} type="file" accept=".csv" style={{ display:'none' }} onChange={handleCostImport} />
+
+          <button onClick={downloadCostTemplate} style={{
+            display:'flex', alignItems:'center', gap:'7px', padding:'9px 16px', borderRadius:'10px',
+            background:'rgba(251,191,36,0.08)', border:'1px solid rgba(251,191,36,0.2)',
+            color:'rgba(251,191,36,0.8)', cursor:'pointer', fontSize:'13px', fontWeight:600, transition:'all 0.2s',
+          }} title="Download CSV template">
+            <Download size={15}/> Template
+          </button>
+
+          <button onClick={() => csvImportRef.current?.click()} disabled={importing} style={{
+            display:'flex', alignItems:'center', gap:'7px', padding:'9px 16px', borderRadius:'10px',
+            background: importing ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.1)', border:'1px solid rgba(99,102,241,0.25)',
+            color:'rgba(167,139,250,0.9)', cursor: importing ? 'not-allowed' : 'pointer', fontSize:'13px', fontWeight:600, transition:'all 0.2s',
+          }}>
+            <Upload size={15}/> {importing ? 'Importing…' : 'Import Costs CSV'}
+          </button>
+
           <button onClick={exportCSV} style={{
             display:'flex', alignItems:'center', gap:'7px', padding:'9px 16px', borderRadius:'10px',
             background:'rgba(52,211,153,0.08)', border:'1px solid rgba(52,211,153,0.2)',
@@ -241,6 +327,13 @@ export default function ProductsView({ store, refreshTrigger }) {
           />
         </div>
       </div>
+
+      {/* Import result */}
+      {importResult && (
+        <div style={{ display:'flex', gap:'10px', alignItems:'center', padding:'14px 18px', borderRadius:'12px', marginBottom:'16px', background:'rgba(52,211,153,0.08)', border:'1px solid rgba(52,211,153,0.2)', color:'#34d399', fontSize:'13px' }}>
+          ✅ Updated <strong>{importResult.updated}</strong> product{importResult.updated !== 1 ? 's' : ''} · {importResult.skipped} row{importResult.skipped !== 1 ? 's' : ''} skipped (no match or invalid)
+        </div>
+      )}
 
       {/* Error */}
       {error && (
