@@ -5,14 +5,33 @@ const STATUS_FILTERS = ['All Statuses', 'Delivered', 'Paid', 'Pending', 'Cancele
 
 const fmt = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
 
+function downloadCSV(rows, filename) {
+  const headers = ['Order', 'Customer', 'Total (₹)', 'Tags', 'Date'];
+  const lines = [
+    headers.join(','),
+    ...rows.map(o => [
+      o.name || '',
+      `"${((o.customer_fn || '') + ' ' + (o.customer_ln || '')).trim()}"`,
+      Math.round(parseFloat(o.total_price || 0)),
+      `"${(o.tags || '').replace(/"/g, '""')}"`,
+      new Date(o.created_at).toLocaleDateString('en-IN'),
+    ].join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function SheetView({ store, refreshTrigger }) {
   const [statusFilter, setStatusFilter] = useState('All Statuses');
-  
+
   const now = new Date();
   const d30 = new Date(now); d30.setDate(d30.getDate() - 30);
   const [startDate, setStartDate] = useState(d30.toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(now.toISOString().split('T')[0]);
-  
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -63,7 +82,11 @@ export default function SheetView({ store, refreshTrigger }) {
           <button className="primary" style={{ fontSize: '13px', padding: '8px 16px' }} onClick={fetchOrders}>
             {loading ? 'Fetching...' : 'Fetch Details'}
           </button>
-          <button style={{ fontSize: '12px', padding: '8px 14px' }}>⬇ Export CSV</button>
+          <button
+            onClick={() => downloadCSV(filteredOrders, `${store?.store_name || 'orders'}-${startDate}-${endDate}.csv`)}
+            disabled={filteredOrders.length === 0}
+            style={{ fontSize: '12px', padding: '8px 14px', opacity: filteredOrders.length === 0 ? 0.4 : 1, cursor: filteredOrders.length === 0 ? 'not-allowed' : 'pointer' }}
+          >⬇ Export CSV ({filteredOrders.length})</button>
         </div>
       </div>
 

@@ -1377,6 +1377,74 @@ async function sendAdminEmail({ subject, html }) {
   }
 }
 
+// ── Owner email helpers ───────────────────────────────────────────────────────
+async function getOwnerEmail(ownerId) {
+  try {
+    const { data: { user } } = await supabase.auth.admin.getUserById(ownerId);
+    return user?.email || null;
+  } catch (e) { return null; }
+}
+
+async function sendOwnerEmail(toEmail, { subject, html }) {
+  if (!toEmail) return;
+  const from = process.env.EMAIL_USER;
+  if (!from) { console.warn('[Email] EMAIL_USER not set — skipping owner email'); return; }
+  const transport = createMailTransport();
+  if (!transport) return;
+  try {
+    await transport.sendMail({ from: `"Pocket Dashboard" <${from}>`, to: toEmail, subject, html });
+    console.log(`[Email] → ${toEmail}: ${subject}`);
+  } catch (e) {
+    console.error('[Email] Owner send failed:', e.message);
+  }
+}
+
+// ── RTO spike alert (12h cooldown per store) ──────────────────────────────────
+const rtoAlertSentAt = new Map();
+
+async function checkRtoSpike(storeId, storeName, ownerEmail) {
+  const cooldown = rtoAlertSentAt.get(storeId);
+  if (cooldown && Date.now() - cooldown < 12 * 60 * 60 * 1000) return;
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: orders } = await supabase
+    .from('orders').select('tags').eq('store_id', storeId).gte('created_at', since);
+
+  if (!orders?.length || orders.length < 5) return;
+
+  const rtoCount = orders.filter(o => {
+    const t = (o.tags || '').toLowerCase();
+    return t.includes('rto') || t.includes('returned') || t.includes('undelivered');
+  }).length;
+
+  const rtoRate = Math.round((rtoCount / orders.length) * 100);
+  if (rtoRate < 25) return;
+
+  rtoAlertSentAt.set(storeId, Date.now());
+  if (!ownerEmail) return;
+
+  await sendOwnerEmail(ownerEmail, {
+    subject: `⚠️ High RTO Alert: ${storeName} — ${rtoRate}% in last 24h`,
+    html: `
+<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:16px;overflow:hidden;border:1px solid rgba(248,113,133,0.3)">
+  <div style="background:linear-gradient(135deg,#991b1b,#dc2626);padding:20px 24px">
+    <h2 style="margin:0;color:#fff;font-size:18px;font-weight:800">⚠️ High RTO Rate Alert</h2>
+    <p style="margin:4px 0 0;color:rgba(255,255,255,0.7);font-size:13px">${storeName}</p>
+  </div>
+  <div style="padding:24px">
+    <div style="text-align:center;background:rgba(248,113,133,0.08);border:1px solid rgba(248,113,133,0.2);border-radius:12px;padding:20px;margin-bottom:20px">
+      <div style="font-size:52px;font-weight:900;color:#f87171;line-height:1">${rtoRate}%</div>
+      <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:6px">RTO Rate (last 24 hours) · ${rtoCount} of ${orders.length} orders</div>
+    </div>
+    <p style="font-size:13px;color:rgba(255,255,255,0.5);line-height:1.75;margin:0 0 18px">Your RTO rate crossed 25% in the last 24 hours. This may indicate address quality issues, COD fraud, or product delivery problems.</p>
+    <a href="https://pocketdashboard.app/dashboard#analytics" style="display:block;text-align:center;padding:13px;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px">Investigate in Dashboard →</a>
+  </div>
+  <div style="padding:14px 24px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;color:rgba(255,255,255,0.2)">Pocket Dashboard · pocketdashboard.app</div>
+</div>`,
+  });
+  console.log(`[RTO Alert] ⚠️ Sent to ${ownerEmail} for ${storeName} (${rtoRate}%)`);
+}
+
 // ── Supabase Webhook: new store signup ────────────────────────────────────────
 // Called by a Supabase Database Webhook on INSERT to public.stores
 // Secure with WEBHOOK_SECRET env var (set same value in Supabase webhook header)
@@ -1542,7 +1610,7 @@ Generate 3 sharp, specific, data-backed insights that help the store owner under
 async function runAutoSync() {
   const { data: stores, error } = await supabase
     .from('stores')
-    .select('id, store_name, shopify_domain')
+    .select('id, store_name, shopify_domain, owner_id')
     .eq('is_active', true);
 
   if (error || !stores || stores.length === 0) {
@@ -1559,6 +1627,12 @@ async function runAutoSync() {
     try {
       const result = await syncStoreData(store.id);
       console.log(`[AutoSync] ✅ ${store.store_name} (${store.shopify_domain}): ${result.totalSynced} orders synced (${result.mode})`);
+      // Non-blocking RTO spike check after each sync
+      if (store.owner_id) {
+        getOwnerEmail(store.owner_id).then(email => {
+          checkRtoSpike(store.id, store.store_name, email).catch(() => {});
+        }).catch(() => {});
+      }
     } catch (err) {
       // One store failing must not stop the others
       console.error(`[AutoSync] ❌ ${store.store_name} (${store.shopify_domain}): ${err.message}`);
@@ -1604,6 +1678,190 @@ async function runShiprocketAutoSync() {
 cron.schedule('*/30 * * * *', () => {
   console.log('[SRAutoSync] ⏰ Triggered');
   runShiprocketAutoSync().catch(err => console.error('[SRAutoSync] Unhandled:', err.message));
+});
+
+// ── User Feedback / NPS endpoint ─────────────────────────────────────────────
+app.post('/api/feedback', async (req, res) => {
+  const { store_id, owner_email, nps_score, comment, type = 'nps' } = req.body;
+  if (nps_score == null && !comment) return res.status(400).json({ error: 'Missing feedback' });
+
+  // Best-effort Supabase save (table created via migration)
+  try {
+    await supabase.from('feedback').insert([{
+      store_id: store_id || null,
+      owner_email: owner_email || null,
+      nps_score: nps_score != null ? Number(nps_score) : null,
+      comment: comment || null,
+      type,
+    }]);
+  } catch (e) {
+    console.warn('[Feedback] Supabase save skipped (table may not exist yet):', e.message);
+  }
+
+  const scoreEmoji = nps_score >= 9 ? '🌟' : nps_score >= 7 ? '👍' : nps_score != null ? '⚠️' : '💬';
+  await sendAdminEmail({
+    subject: `${scoreEmoji} New Feedback: NPS ${nps_score != null ? nps_score + '/10' : 'N/A'} from ${owner_email || 'unknown'}`,
+    html: `
+<div style="font-family:sans-serif;max-width:480px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:12px;overflow:hidden;border:1px solid #1e1e3a">
+  <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);padding:18px 22px">
+    <h3 style="margin:0;color:#fff;font-size:16px">${scoreEmoji} New User Feedback</h3>
+  </div>
+  <div style="padding:20px">
+    <table style="width:100%;border-collapse:collapse">
+      ${[['From', owner_email||'—'],['NPS Score', nps_score != null ? `${nps_score}/10` : '—'],['Type', type]]
+        .map(([k,v]) => `<tr><td style="padding:6px 0;color:rgba(255,255,255,0.4);font-size:13px;width:35%">${k}</td><td style="padding:6px 0;color:#e2e8f0;font-size:13px;font-weight:600">${v}</td></tr>`).join('')}
+    </table>
+    ${comment ? `<div style="margin-top:14px;padding:14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;font-size:13px;color:#e2e8f0;line-height:1.7">"${comment}"</div>` : ''}
+  </div>
+</div>`,
+  });
+
+  res.json({ ok: true });
+});
+
+// ── Daily digest email — 9:00 AM IST (03:30 UTC) ─────────────────────────────
+async function sendDailyDigests() {
+  console.log('[DailyDigest] Starting...');
+  const { data: stores } = await supabase
+    .from('stores').select('id, store_name, owner_id').eq('is_active', true);
+  if (!stores?.length) return;
+
+  // Yesterday in IST (UTC+5:30)
+  const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const yesterday = new Date(istNow);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const ymd = yesterday.toISOString().split('T')[0];
+  const startISO = new Date(ymd + 'T00:00:00+05:30').toISOString();
+  const endISO   = new Date(ymd + 'T23:59:59+05:30').toISOString();
+  const displayDate = yesterday.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', weekday: 'short', timeZone: 'Asia/Kolkata' });
+
+  for (const store of stores) {
+    try {
+      const ownerEmail = await getOwnerEmail(store.owner_id);
+      if (!ownerEmail) continue;
+
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('total_price, tags, cancelled_at')
+        .eq('store_id', store.id)
+        .gte('created_at', startISO)
+        .lte('created_at', endISO);
+
+      if (!orders?.length) continue; // No orders yesterday — skip
+
+      const revenue  = orders.reduce((s, o) => s + parseFloat(o.total_price || 0), 0);
+      const rtoCount = orders.filter(o => { const t = (o.tags||'').toLowerCase(); return t.includes('rto') || t.includes('returned') || t.includes('undelivered'); }).length;
+      const rtoRate  = Math.round((rtoCount / orders.length) * 100);
+      const fmt      = n => '₹' + Math.round(n).toLocaleString('en-IN');
+
+      await sendOwnerEmail(ownerEmail, {
+        subject: `📊 ${store.store_name}: ${orders.length} orders, ${fmt(revenue)} — ${displayDate}`,
+        html: `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;max-width:500px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:16px;overflow:hidden;border:1px solid #1e1e3a">
+  <div style="background:linear-gradient(135deg,#6366f1,#4f46e5);padding:24px">
+    <div style="font-size:11px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px">Daily Snapshot</div>
+    <h2 style="margin:0 0 2px;color:#fff;font-size:22px;font-weight:800">${store.store_name}</h2>
+    <div style="font-size:13px;color:rgba(255,255,255,0.65)">${displayDate}</div>
+  </div>
+  <div style="padding:24px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+      <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);border-radius:12px;padding:18px">
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em">Revenue</div>
+        <div style="font-size:24px;font-weight:800;color:#10b981">${fmt(revenue)}</div>
+      </div>
+      <div style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:12px;padding:18px">
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em">Orders</div>
+        <div style="font-size:24px;font-weight:800;color:#818cf8">${orders.length}</div>
+      </div>
+      <div style="background:${rtoCount>0?'rgba(248,113,133,0.08)':'rgba(255,255,255,0.03)'};border:1px solid ${rtoCount>0?'rgba(248,113,133,0.2)':'rgba(255,255,255,0.07)'};border-radius:12px;padding:18px">
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em">RTOs</div>
+        <div style="font-size:24px;font-weight:800;color:${rtoCount>0?'#f87171':'#64748b'}">${rtoCount}</div>
+      </div>
+      <div style="background:${rtoRate>20?'rgba(248,113,133,0.08)':rtoRate>10?'rgba(251,191,36,0.08)':'rgba(16,185,129,0.08)'};border:1px solid ${rtoRate>20?'rgba(248,113,133,0.2)':rtoRate>10?'rgba(251,191,36,0.2)':'rgba(16,185,129,0.2)'};border-radius:12px;padding:18px">
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em">RTO Rate</div>
+        <div style="font-size:24px;font-weight:800;color:${rtoRate>20?'#f87171':rtoRate>10?'#fbbf24':'#10b981'}">${rtoRate}%</div>
+      </div>
+    </div>
+    ${rtoRate>20?`<div style="background:rgba(248,113,133,0.08);border:1px solid rgba(248,113,133,0.2);border-radius:10px;padding:13px;margin-bottom:16px"><span style="color:#f87171;font-weight:700">⚠️ High RTO Rate</span> <span style="color:rgba(255,255,255,0.5);font-size:13px">— Review recent orders for address or product issues.</span></div>`:''}
+    <a href="https://pocketdashboard.app/dashboard" style="display:block;text-align:center;padding:14px;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px">Open Full Dashboard →</a>
+  </div>
+  <div style="padding:14px 24px;border-top:1px solid rgba(255,255,255,0.05);text-align:center;font-size:11px;color:rgba(255,255,255,0.2)">
+    Pocket Dashboard · Free for all store owners · <a href="https://pocketdashboard.app" style="color:rgba(255,255,255,0.25)">pocketdashboard.app</a>
+  </div>
+</div>`,
+      });
+      await new Promise(r => setTimeout(r, 1200));
+    } catch (e) {
+      console.error(`[DailyDigest] Error for ${store.store_name}:`, e.message);
+    }
+  }
+  console.log('[DailyDigest] ✅ Complete.');
+}
+
+cron.schedule('30 3 * * *', () => {
+  console.log('[DailyDigest] ⏰ Triggered (9am IST)');
+  sendDailyDigests().catch(e => console.error('[DailyDigest] Unhandled:', e.message));
+});
+
+// ── Weekly re-engagement (churn nudge) — Sunday 10am IST = 04:30 UTC ─────────
+async function detectAndNudgeChurned() {
+  console.log('[ChurnDetect] Checking inactive users...');
+  const { data: stores } = await supabase
+    .from('stores').select('id, store_name, owner_id').eq('is_active', true);
+  if (!stores?.length) return;
+
+  for (const store of stores) {
+    try {
+      const { data: { user } } = await supabase.auth.admin.getUserById(store.owner_id);
+      if (!user?.email || !user?.last_sign_in_at) continue;
+
+      const daysSince = Math.floor((Date.now() - new Date(user.last_sign_in_at).getTime()) / 86400000);
+      if (daysSince < 7) continue;
+
+      const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: orders } = await supabase
+        .from('orders').select('total_price').eq('store_id', store.id).gte('created_at', since7d);
+
+      const weekRev = (orders||[]).reduce((s, o) => s + parseFloat(o.total_price||0), 0);
+      const fmt = n => '₹' + Math.round(n).toLocaleString('en-IN');
+
+      await sendOwnerEmail(user.email, {
+        subject: `${store.store_name} had ${(orders||[]).length} orders while you were away`,
+        html: `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;max-width:500px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:16px;overflow:hidden;border:1px solid #1e1e3a">
+  <div style="background:linear-gradient(135deg,#7c3aed,#6366f1);padding:24px">
+    <h2 style="margin:0 0 6px;color:#fff;font-size:20px;font-weight:800">We've been tracking for you 👋</h2>
+    <p style="margin:0;color:rgba(255,255,255,0.65);font-size:13px">Here's what happened at ${store.store_name} this week</p>
+  </div>
+  <div style="padding:24px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+      <div style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:12px;padding:18px;text-align:center">
+        <div style="font-size:30px;font-weight:900;color:#818cf8">${(orders||[]).length}</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:4px">Orders this week</div>
+      </div>
+      <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);border-radius:12px;padding:18px;text-align:center">
+        <div style="font-size:30px;font-weight:900;color:#10b981">${fmt(weekRev)}</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:4px">Revenue this week</div>
+      </div>
+    </div>
+    <p style="font-size:13px;color:rgba(255,255,255,0.45);line-height:1.75;margin:0 0 16px">Open your dashboard to see profit margins, RTO rates, and AI insights for your store.</p>
+    <a href="https://pocketdashboard.app/dashboard" style="display:block;text-align:center;padding:13px;background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px">See Full Dashboard →</a>
+  </div>
+  <div style="padding:14px 24px;border-top:1px solid rgba(255,255,255,0.05);text-align:center;font-size:11px;color:rgba(255,255,255,0.2)">Pocket Dashboard · Keeping your analytics on autopilot</div>
+</div>`,
+      });
+      console.log(`[ChurnDetect] Nudge sent to ${user.email} (${daysSince} days inactive)`);
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.error('[ChurnDetect] Error:', e.message);
+    }
+  }
+  console.log('[ChurnDetect] ✅ Done.');
+}
+
+cron.schedule('30 4 * * 0', () => {
+  console.log('[ChurnDetect] ⏰ Weekly churn check triggered (Sunday 10am IST)');
+  detectAndNudgeChurned().catch(e => console.error('[ChurnDetect] Unhandled:', e.message));
 });
 
 // Keep-alive: Render free tier spins down after 15 min of inactivity, killing the cron job.

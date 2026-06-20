@@ -244,6 +244,63 @@ function ComingSoon({ icon: Icon, title, description }) {
 }
 
 /* ─────────────────────────────────────────────
+   SETUP COMPLETION CARD
+───────────────────────────────────────────── */
+function SetupCard({ store, onNavigate }) {
+  const [dismissed, setDismissed] = React.useState(() => !!localStorage.getItem('pocket_setup_dismissed'));
+  if (dismissed) return null;
+
+  const steps = [
+    { done: true, label: 'Store connected', sub: 'Shopify sync is live' },
+    { done: !!store?.products_synced_at, label: 'Product costs entered', sub: 'Required for accurate P&L', action: () => onNavigate('products') },
+    { done: !!store?.shiprocket_connected, label: 'Shiprocket connected', sub: 'For real-time RTO tracking', action: () => onNavigate('connect') },
+  ];
+  const doneCount = steps.filter(s => s.done).length;
+  const pct = Math.round((doneCount / steps.length) * 100);
+
+  if (doneCount === steps.length) return null;
+
+  return (
+    <div style={{ margin: '0 0 20px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 16, padding: '18px 20px', position: 'relative' }}>
+      <button
+        onClick={() => { setDismissed(true); localStorage.setItem('pocket_setup_dismissed', '1'); }}
+        style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', color: 'rgba(255,255,255,0.25)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 4 }}
+      >✕</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#a5b4fc', marginBottom: 2 }}>Setup {pct}% complete</div>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>Complete setup for accurate profit numbers</div>
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 900, color: '#6366f1', marginRight: 24 }}>{pct}%</div>
+      </div>
+      <div style={{ height: 5, borderRadius: 99, background: 'rgba(255,255,255,0.06)', marginBottom: 14, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99, background: 'linear-gradient(90deg,#6366f1,#818cf8)', transition: 'width 0.5s ease', boxShadow: '0 0 8px rgba(99,102,241,0.4)' }} />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {steps.map((s, i) => (
+          <div
+            key={i}
+            onClick={!s.done && s.action ? s.action : undefined}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 10, background: s.done ? 'rgba(16,185,129,0.06)' : 'rgba(255,255,255,0.03)', cursor: !s.done && s.action ? 'pointer' : 'default', transition: 'background 0.2s' }}
+            onMouseEnter={e => { if (!s.done && s.action) e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
+            onMouseLeave={e => { if (!s.done) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+          >
+            <div style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, background: s.done ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)', border: `1px solid ${s.done ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.1)'}`, color: s.done ? '#10b981' : '#475569' }}>
+              {s.done ? '✓' : i + 1}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: s.done ? '#34d399' : '#e2e8f0' }}>{s.label}</div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>{s.sub}</div>
+            </div>
+            {!s.done && s.action && <span style={{ fontSize: 11, color: '#818cf8', fontWeight: 600 }}>Set up →</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    SIDEBAR NAV ITEM — Premium active state
 ───────────────────────────────────────────── */
 function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
@@ -295,6 +352,9 @@ function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
 }
 
 import ConnectShopifyStep from './ConnectShopifyStep';
+const SupportPage = lazy(() => import('./SupportPage'));
+const FeatureRequests = lazy(() => import('./FeatureRequests'));
+const NpsWidget = lazy(() => import('./NpsWidget'));
 
 /* ─────────────────────────────────────────────
    CONNECTED STORE PANEL — shown on "Connect your Store" tab when already connected
@@ -918,6 +978,12 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             </div>
           </div>
 
+          {/* Beta banner */}
+          <div style={{ margin: '10px 10px 0', padding: '10px 14px', background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#34d399', marginBottom: 2 }}>🎁 Free during beta</div>
+            <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.35)', lineHeight: 1.5 }}>All features free until Jan 2027. Early users get a discount when pricing launches.</div>
+          </div>
+
           {/* Nav */}
           <nav style={{ flex: 1, padding: '14px 10px', display: 'flex', flexDirection: 'column', gap: '3px', overflowY: 'auto' }}>
             <div style={{ fontSize: '9.5px', fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '1.2px', textTransform: 'uppercase', padding: '8px 10px 6px', marginBottom: '2px' }}>
@@ -1061,6 +1127,10 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
 
           {/* Content */}
           <div className="panel-content">
+            {/* Setup completion card — shown on dashboard when store is connected but setup incomplete */}
+            {isConnected && ['dashboard', 'money', 'analytics'].includes(activeTab) && (
+              <SetupCard store={store} onNavigate={(tab) => { setActiveTab(tab); setMobileSidebarOpen(false); }} />
+            )}
             <Suspense fallback={<ViewLoading />}>
               {isTrialExpired && !['pricing', 'connect', 'support', 'settings'].includes(activeTab) ? (
                 <TrialExpiredState onUpgradeClick={() => setActiveTab('pricing')} />
@@ -1109,10 +1179,10 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   )}
                   {activeTab === 'pricing' && <PricingView store={store} />}
                   {activeTab === 'settings' && (
-                    <ComingSoon icon={Settings} title="Settings" description="Manage your account preferences, notifications, and billing options — coming very soon." />
+                    <FeatureRequests session={session} store={store} />
                   )}
                   {activeTab === 'support' && (
-                    <ComingSoon icon={Headphones} title="Talk to Support" description="Live chat and priority support for all brand owners. Launching shortly — you'll be notified." />
+                    <SupportPage session={session} />
                   )}
                 </>
               )}
@@ -1128,6 +1198,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
           isOpen={copilotOpen}
           onClose={() => setCopilotOpen(false)}
         />
+        {isConnected && <NpsWidget session={session} store={store} />}
       </Suspense>
 
 
