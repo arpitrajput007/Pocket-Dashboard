@@ -167,6 +167,7 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
           syncToDate={syncToDate} setSyncToDate={setSyncToDate}
           loading={loading} connectStatus={connectStatus}
           onBack={() => {}} onContinue={handleEmbeddedSubmit}
+          session={session}
         />
       </div>
     );
@@ -354,6 +355,7 @@ export default function Onboarding({ session, isEmbedded = false, onStoreConnect
                 syncFromDate={syncFromDate}   setSyncFromDate={setSyncFromDate}
                 syncToDate={syncToDate}   setSyncToDate={setSyncToDate}
                 onBack={prevStep}             onContinue={nextStep}
+                session={session}
               />
             )}
 

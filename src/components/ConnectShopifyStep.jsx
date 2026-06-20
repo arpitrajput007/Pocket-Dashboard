@@ -248,10 +248,18 @@ function TokenGuideButton() {
   );
 }
 
-export default function ConnectShopifyStep({ storeName = '', setStoreName, shopifyDomain, setShopifyDomain, clientId = '', setClientId, accessToken = '', setAccessToken, showToken, setShowToken, syncFromType, setSyncFromType, syncFromDate, setSyncFromDate, syncToDate = '', setSyncToDate, onBack, onContinue, loading = false, connectStatus = '' }) {
+export default function ConnectShopifyStep({ storeName = '', setStoreName, shopifyDomain, setShopifyDomain, clientId = '', setClientId, accessToken = '', setAccessToken, showToken, setShowToken, syncFromType, setSyncFromType, syncFromDate, setSyncFromDate, syncToDate = '', setSyncToDate, onBack, onContinue, loading = false, connectStatus = '', session = null }) {
   const [openFaq, setOpenFaq] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const todayStr = new Date().toISOString().split('T')[0];
+
+  const handleOAuthConnect = () => {
+    const domain = shopifyDomain.trim().replace('.myshopify.com', '');
+    const userId = session?.user?.id;
+    if (!domain) { alert('Enter your Shopify store name first (e.g. my-store).'); return; }
+    if (!userId)  { alert('You must be logged in to connect.'); return; }
+    window.location.href = `/api/auth/shopify/start?shop=${encodeURIComponent(domain)}&userId=${encodeURIComponent(userId)}`;
+  };
   // Custom range is valid only when a "from" date is chosen (to date defaults to today)
   const rangeValid = syncFromType === 'all' || (syncFromType === 'custom' && !!syncFromDate && syncFromDate !== '2000-01-01');
   const canContinue = shopifyDomain.trim() && accessToken.trim() && (!setStoreName || storeName.trim()) && rangeValid;
@@ -335,6 +343,41 @@ export default function ConnectShopifyStep({ storeName = '', setStoreName, shopi
           {/* Guidance button */}
           <DomainGuideButton />
         </div>
+
+        {/* ── OAuth connect button (fastest path) ── */}
+        {session && (
+          <div style={{ marginBottom: 32, padding: '22px 24px', background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(56,189,248,0.05))', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#a5b4fc', marginBottom: 4 }}>Recommended: Connect with one click</div>
+            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)', marginBottom: 14, lineHeight: 1.6 }}>
+              Fill in your store name above, then click below. You'll be taken to Shopify to approve — no token copying needed.
+            </div>
+            <button
+              type="button"
+              onClick={handleOAuthConnect}
+              disabled={!shopifyDomain.trim()}
+              style={{
+                width: '100%', padding: '13px', borderRadius: 12, border: 'none',
+                background: shopifyDomain.trim() ? 'linear-gradient(135deg, #6366f1, #4f46e5)' : 'rgba(255,255,255,0.06)',
+                color: shopifyDomain.trim() ? '#fff' : '#475569',
+                fontSize: 14.5, fontWeight: 700, cursor: shopifyDomain.trim() ? 'pointer' : 'not-allowed',
+                fontFamily: 'inherit',
+                boxShadow: shopifyDomain.trim() ? '0 4px 20px rgba(99,102,241,0.35)' : 'none',
+                transition: 'all 0.2s',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 50 50" fill="currentColor" style={{ opacity: 0.9 }}>
+                <path d="M43.8 10.8c0 0-0.4-0.4-1-0.4 0 0-3.6-0.4-3.6-0.4s-2.4-2.4-2.6-2.6c-0.2-0.2-0.6-0.1-0.8-0.1l-1.2 25.4 10.5-2.3L43.8 10.8zM28.9 11.9l-1.3-0.4c0 0-0.8-2.6-2.8-2.6-2.1 0-3.1 1.6-3.4 2.7l-2.8 0.8c0 0 2.4-8.6 10.4-5.5L28.9 11.9zM24.7 12.8L23 13.3c0.5-2 1.9-4.1 4.3-4.1 0.5 0 1 0.1 1.4 0.3L24.7 12.8zM32.6 30.5l-16 4.3 8.6-24.4 7.4 20.1zM15.3 35.2l-1.5 0.4L10 11.1c0 0 3.3-0.5 5.8 2.5L15.3 35.2z"/>
+              </svg>
+              Connect with Shopify →
+            </button>
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ height: 1, flex: 1, background: 'rgba(255,255,255,0.07)' }} />
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', fontWeight: 600 }}>or enter token manually below</span>
+              <div style={{ height: 1, flex: 1, background: 'rgba(255,255,255,0.07)' }} />
+            </div>
+          </div>
+        )}
 
         {/* Client ID */}
         <div style={{ marginBottom: 28 }}>

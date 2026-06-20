@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { OpenAI } = require('openai');
@@ -159,6 +160,131 @@ async function registerShopifyWebhooks(domain, accessToken, clientId = null) {
     }
   }
 }
+
+// ── Shopify OAuth ─────────────────────────────────────────────────────────────
+const SHOPIFY_OAUTH_CLIENT_ID     = process.env.SHOPIFY_OAUTH_CLIENT_ID     || '';
+const SHOPIFY_OAUTH_CLIENT_SECRET = process.env.SHOPIFY_OAUTH_CLIENT_SECRET || '';
+const SHOPIFY_OAUTH_SCOPES        = 'read_orders,read_products,read_customers,read_fulfillments';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://pocketdashboard.app';
+
+// CSRF guard: state_token → { userId, shop, expiresAt }
+const shopifyOAuthStates = new Map();
+setInterval(() => {
+  const now = Date.now();
+  shopifyOAuthStates.forEach((v, k) => { if (v.expiresAt < now) shopifyOAuthStates.delete(k); });
+}, 30 * 60 * 1000);
+
+/**
+ * GET /api/auth/shopify/start?shop=mystore.myshopify.com&userId=UUID
+ * Redirects the store owner to Shopify's OAuth consent screen.
+ */
+app.get('/api/auth/shopify/start', (req, res) => {
+  const { shop, userId } = req.query;
+  if (!shop || !userId) return res.status(400).json({ error: 'shop and userId are required' });
+  if (!SHOPIFY_OAUTH_CLIENT_ID) return res.status(500).json({ error: 'Shopify OAuth not configured on this server' });
+
+  const shopDomain = shop.replace(/https?:\/\//, '').replace(/\/$/, '').replace(/\.myshopify\.com$/, '') + '.myshopify.com';
+  const state = crypto.randomBytes(16).toString('hex');
+  shopifyOAuthStates.set(state, { userId, shop: shopDomain, expiresAt: Date.now() + 10 * 60 * 1000 });
+
+  // Callback goes through the Vercel proxy (pocketdashboard.app/api → Render)
+  const redirectUri = `${FRONTEND_URL}/api/auth/shopify/callback`;
+  const installUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${SHOPIFY_OAUTH_CLIENT_ID}&scope=${encodeURIComponent(SHOPIFY_OAUTH_SCOPES)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+
+  console.log(`[ShopifyOAuth] Starting install for ${shopDomain}`);
+  res.redirect(installUrl);
+});
+
+/**
+ * GET /api/auth/shopify/callback
+ * Shopify redirects here after the store owner approves the install.
+ */
+app.get('/api/auth/shopify/callback', async (req, res) => {
+  const { code, hmac, shop, state } = req.query;
+  const fail = (reason) => {
+    console.error('[ShopifyOAuth] Failed:', reason);
+    res.redirect(`${FRONTEND_URL}/dashboard?oauth_error=${encodeURIComponent(reason)}`);
+  };
+
+  // 1 — Validate CSRF state
+  const stateData = shopifyOAuthStates.get(state);
+  if (!stateData || stateData.expiresAt < Date.now()) return fail('session_expired');
+  shopifyOAuthStates.delete(state);
+
+  // 2 — Validate Shopify HMAC signature
+  const paramStr = Object.entries(req.query)
+    .filter(([k]) => k !== 'hmac')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
+  const expectedHmac = crypto.createHmac('sha256', SHOPIFY_OAUTH_CLIENT_SECRET).update(paramStr).digest('hex');
+  if (expectedHmac !== hmac) return fail('invalid_hmac');
+
+  // 3 — Exchange auth code for permanent access token
+  let access_token;
+  try {
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: SHOPIFY_OAUTH_CLIENT_ID, client_secret: SHOPIFY_OAUTH_CLIENT_SECRET, code }),
+    });
+    const body = await tokenRes.json();
+    access_token = body.access_token;
+    if (!access_token) throw new Error(body.error_description || 'No token in response');
+  } catch (e) {
+    return fail('token_exchange_failed: ' + e.message);
+  }
+
+  // 4 — Fetch shop name from Shopify
+  let storeName = shop.replace('.myshopify.com', '');
+  try {
+    const infoRes = await fetch(`https://${shop}/admin/api/2024-01/shop.json`, {
+      headers: { 'X-Shopify-Access-Token': access_token }
+    });
+    const infoBody = await infoRes.json();
+    if (infoBody.shop?.name) storeName = infoBody.shop.name;
+  } catch (_) { /* non-critical — store name falls back to domain */ }
+
+  // 5 — Save to Supabase (update existing store or create new)
+  const shopDomain = shop.replace('.myshopify.com', '');
+  const encryptedToken = encrypt(access_token);
+
+  const { data: existing } = await supabase
+    .from('stores').select('id').eq('owner_id', stateData.userId).maybeSingle();
+
+  let storeId;
+  if (existing) {
+    await supabase.from('stores').update({
+      shopify_domain: shopDomain,
+      store_name: storeName,
+      shopify_access_token: encryptedToken,
+      shopify_client_id: null,
+    }).eq('id', existing.id);
+    storeId = existing.id;
+    console.log(`[ShopifyOAuth] Updated store ${storeId} → ${shopDomain}`);
+  } else {
+    const { data: created, error: insertErr } = await supabase.from('stores').insert([{
+      owner_id: stateData.userId,
+      store_name: storeName,
+      shopify_domain: shopDomain,
+      shopify_access_token: encryptedToken,
+      primary_color: '#6366f1',
+      dashboard_style: 'dark-modern',
+      dashboard_features: { daily_view: true, scoreboard: true, weekly_view: false, monthly_view: false, all_time_view: false, business_analytics: true },
+    }]).select().single();
+    if (insertErr || !created) return fail('db_insert: ' + insertErr?.message);
+    storeId = created.id;
+    console.log(`[ShopifyOAuth] Created store ${storeId} → ${shopDomain}`);
+  }
+
+  // 6 — Register webhooks + kick off initial sync (both non-blocking)
+  registerShopifyWebhooks(shopDomain, access_token).catch(e =>
+    console.warn('[ShopifyOAuth] Webhook reg failed (non-critical):', e.message)
+  );
+  fetch(`http://localhost:${PORT}/api/sync/${storeId}`, { method: 'POST' }).catch(() => {});
+
+  res.redirect(`${FRONTEND_URL}/dashboard?shopify_connected=1`);
+});
 
 /**
  * POST /api/store

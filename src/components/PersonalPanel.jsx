@@ -533,6 +533,7 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
             onBack={() => { setIsEditing(false); setEditError(''); }}
             onContinue={handleSaveEdit}
             loading={savingEdit}
+            session={session}
           />
         </div>
       </div>
@@ -790,6 +791,20 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
   useEffect(() => {
     window.location.hash = activeTab;
   }, [activeTab]);
+
+  // Handle return from Shopify OAuth — detect ?shopify_connected=1 or ?oauth_error=...
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('shopify_connected') === '1') {
+      window.history.replaceState({}, '', '/dashboard');
+      if (onStoreConnected) onStoreConnected();
+    } else if (params.get('oauth_error')) {
+      const err = params.get('oauth_error');
+      window.history.replaceState({}, '', '/dashboard');
+      console.error('[ShopifyOAuth] Error returned:', err);
+      alert(`Shopify connection failed (${err}). Please try again or use the manual token method.`);
+    }
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
