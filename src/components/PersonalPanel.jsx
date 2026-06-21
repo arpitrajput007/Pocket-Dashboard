@@ -355,7 +355,7 @@ function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
 
 import ConnectShopifyStep from './ConnectShopifyStep';
 const SupportPage = lazy(() => import('./SupportPage'));
-const FeatureRequests = lazy(() => import('./FeatureRequests'));
+const SettingsPage = lazy(() => import('./SettingsPage'));
 const NpsWidget = lazy(() => import('./NpsWidget'));
 
 /* ─────────────────────────────────────────────
@@ -1206,7 +1206,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   )}
                   {activeTab === 'pricing' && <PricingView store={store} />}
                   {activeTab === 'settings' && (
-                    <FeatureRequests session={session} store={store} />
+                    <SettingsPage session={session} store={store} />
                   )}
                   {activeTab === 'support' && (
                     <SupportPage session={session} />
