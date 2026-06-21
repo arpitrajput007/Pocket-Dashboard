@@ -466,7 +466,7 @@ export default function ProductsView({ store, refreshTrigger }) {
                         fontSize:'12px', fontWeight:700,
                         color: isProfit ? 'rgba(52,211,153,0.9)' : 'rgba(251,113,133,0.9)',
                       }}>
-                        {p.margin.toFixed(1)}%
+                        {isFinite(p.margin) ? p.margin.toFixed(1) : '0.0'}%
                       </div>
                     </td>
                     {/* Hide/Show */}

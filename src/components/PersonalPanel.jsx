@@ -247,7 +247,7 @@ function ComingSoon({ icon: Icon, title, description }) {
    SETUP COMPLETION CARD
 ───────────────────────────────────────────── */
 function SetupCard({ store, onNavigate }) {
-  const [dismissed, setDismissed] = React.useState(() => !!localStorage.getItem('pocket_setup_dismissed'));
+  const [dismissed, setDismissed] = React.useState(false);
   if (dismissed) return null;
 
   const steps = [
@@ -263,7 +263,7 @@ function SetupCard({ store, onNavigate }) {
   return (
     <div style={{ margin: '0 0 20px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 16, padding: '18px 20px', position: 'relative' }}>
       <button
-        onClick={() => { setDismissed(true); localStorage.setItem('pocket_setup_dismissed', '1'); }}
+        onClick={() => { setDismissed(true); }}
         style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', color: 'rgba(255,255,255,0.25)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 4 }}
       >✕</button>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
@@ -368,6 +368,28 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
   const [syncPreset, setSyncPreset] = useState('incremental');
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [metaSpend, setMetaSpend] = useState('');
+  const [googleSpend, setGoogleSpend] = useState('');
+  const [savingAdSpend, setSavingAdSpend] = useState(false);
+  const [adSpendSaved, setAdSpendSaved] = useState(false);
+
+  useEffect(() => {
+    if (store?.dashboard_features) {
+      const df = store.dashboard_features;
+      setMetaSpend(df.meta_ads_monthly != null ? String(df.meta_ads_monthly) : '');
+      setGoogleSpend(df.google_ads_monthly != null ? String(df.google_ads_monthly) : '');
+    }
+  }, [store]);
+
+  async function saveAdSpend() {
+    if (!store?.id) return;
+    setSavingAdSpend(true);
+    const df = { ...(store?.dashboard_features || {}), meta_ads_monthly: parseFloat(metaSpend) || 0, google_ads_monthly: parseFloat(googleSpend) || 0 };
+    await supabase.from('stores').update({ dashboard_features: df }).eq('id', store.id);
+    setSavingAdSpend(false);
+    setAdSpendSaved(true);
+    setTimeout(() => setAdSpendSaved(false), 3000);
+  }
   const [editDomain, setEditDomain] = useState(store?.shopify_domain || '');
   const [editClientId, setEditClientId] = useState('');
   const [editToken, setEditToken] = useState('');
@@ -542,20 +564,22 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
 
   return (
     <>
-    <div style={{ maxWidth: 700, margin: '0 auto', animation: 'fadeInUp 0.35s ease forwards' }}>
+    <div style={{ animation: 'fadeInUp 0.35s ease forwards' }}>
 
       {/* ── Header ── */}
-      <div style={{ marginBottom: 28 }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 999, background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.2)', marginBottom: 14 }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 8px #34d399', animation: 'live-pulse 2s ease infinite' }} />
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: '#34d399', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Store Connected</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 999, background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.2)', marginBottom: 10 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 8px #34d399', animation: 'live-pulse 2s ease infinite' }} />
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: '#34d399', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Store Connected</span>
+          </div>
+          <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 26, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px', letterSpacing: '-0.4px' }}>
+            Your Connected Store
+          </h2>
+          <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', margin: 0 }}>
+            Pocket Dashboard is actively syncing data from your Shopify store.
+          </p>
         </div>
-        <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 26, fontWeight: 800, color: '#f1f5f9', margin: '0 0 8px', letterSpacing: '-0.4px' }}>
-          Your Connected Store
-        </h2>
-        <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', margin: 0, lineHeight: 1.7 }}>
-          Pocket Dashboard is actively syncing data from your Shopify store.
-        </p>
       </div>
 
       {/* ── Main Store Card ── */}
@@ -626,15 +650,16 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
         <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginBottom: 24 }} />
 
         {/* Stats grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
           {[
-            { label: 'Status', value: '🟢 Active', sub: 'Live sync running' },
+            { label: 'Status', value: '🟢 Active', sub: 'Live sync enabled' },
             { label: 'Connected Since', value: connectedSince, sub: 'First sync date' },
-            { label: 'Store #', value: '1 Store', sub: 'Connected stores' },
+            { label: 'Store Domain', value: `${store?.shopify_domain}.myshopify.com`, sub: 'Shopify store' },
+            { label: 'Data Access', value: '🔒 Read-only', sub: 'Cannot modify store data' },
           ].map(({ label, value, sub }) => (
             <div key={label} style={{ padding: '16px 18px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14 }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{label}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9', marginBottom: 3 }}>{value}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
               <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.3)' }}>{sub}</div>
             </div>
           ))}
@@ -676,6 +701,76 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
           <p style={{ margin: 0, fontSize: 12.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.7 }}>
             <strong style={{ color: 'rgba(255,255,255,0.7)' }}>Read-only access only.</strong> Pocket Dashboard can never modify, delete, or interact with your store data. Revoke access anytime via Shopify Admin → Settings → Apps.
           </p>
+        </div>
+      </div>
+
+      {/* ── Ad Accounts ── */}
+      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24, padding: '28px 32px', marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9', fontFamily: 'Outfit, sans-serif', marginBottom: 4 }}>Ad Accounts</div>
+            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>Enter your monthly ad spend to include it in P&L. Direct API sync coming soon.</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {adSpendSaved && <span style={{ fontSize: 12, color: '#34d399' }}>✅ Saved</span>}
+            <button
+              onClick={saveAdSpend}
+              disabled={savingAdSpend}
+              style={{ padding: '8px 18px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#6366f1,#4f46e5)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: savingAdSpend ? 'wait' : 'pointer', opacity: savingAdSpend ? 0.7 : 1, fontFamily: 'inherit' }}
+            >
+              {savingAdSpend ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+          {/* Meta Ads */}
+          <div style={{ padding: '20px', background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>📘</div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9' }}>Meta Ads</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Facebook & Instagram</div>
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.25)', color: '#fbbf24' }}>MANUAL</span>
+            </div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Monthly Spend (₹)</label>
+            <input
+              type="number"
+              value={metaSpend}
+              onChange={e => setMetaSpend(e.target.value)}
+              placeholder="e.g. 50000"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: 14, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+            />
+            <button style={{ marginTop: 10, width: '100%', padding: '8px', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)', background: 'rgba(59,130,246,0.06)', color: 'rgba(147,197,253,0.5)', fontSize: 12, cursor: 'default', fontFamily: 'inherit' }}>
+              🔗 Direct API Connect — Coming Soon
+            </button>
+          </div>
+
+          {/* Google Ads */}
+          <div style={{ padding: '20px', background: 'rgba(234,67,53,0.04)', border: '1px solid rgba(234,67,53,0.15)', borderRadius: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(234,67,53,0.12)', border: '1px solid rgba(234,67,53,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🔴</div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9' }}>Google Ads</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Search & Shopping</div>
+              </div>
+              <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.25)', color: '#fbbf24' }}>MANUAL</span>
+            </div>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Monthly Spend (₹)</label>
+            <input
+              type="number"
+              value={googleSpend}
+              onChange={e => setGoogleSpend(e.target.value)}
+              placeholder="e.g. 30000"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: 14, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+            />
+            <button style={{ marginTop: 10, width: '100%', padding: '8px', borderRadius: 8, border: '1px solid rgba(234,67,53,0.2)', background: 'rgba(234,67,53,0.06)', color: 'rgba(252,165,165,0.5)', fontSize: 12, cursor: 'default', fontFamily: 'inherit' }}>
+              🔗 Direct API Connect — Coming Soon
+            </button>
+          </div>
+        </div>
+        <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>
+          💡 Saved ad spend is included as a monthly cost in your P&L dashboard, split evenly across each day.
         </div>
       </div>
 
