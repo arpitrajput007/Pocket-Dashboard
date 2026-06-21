@@ -784,7 +784,7 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
    MAIN PERSONAL PANEL
 ───────────────────────────────────────────── */
 export default function PersonalPanel({ session, store, onStoreConnected }) {
-  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','sheet','products','pricing','connect','ads','advanced','settings','support','features']);
+  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','money','sheet','products','pricing','connect','ads','advanced','settings','support','features']);
   const hashTab = window.location.hash.replace('#', '');
   const [activeTab, setActiveTab] = useState(validTabs.has(hashTab) ? hashTab : 'dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -821,7 +821,8 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     if (!store?.id) return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/sync/${store.id}`, { method: 'POST' });
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const res = await fetch(`${apiUrl}/api/sync/${store.id}`, { method: 'POST' });
         if (res.ok) {
           setLastSyncedTime(new Date());
           setRefreshTrigger(prev => prev + 1);
@@ -852,6 +853,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     monthly: 'Monthly Overview',
     'all-time': 'All-Time Analytics',
     analytics: 'Business Analytics',
+    money: 'Money In My Pocket',
     sheet: 'Sheet View',
     connect: 'Connect your Store',
     products: 'Products',
