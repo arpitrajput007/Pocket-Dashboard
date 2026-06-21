@@ -48,6 +48,7 @@ export default function ProductsView({ store, refreshTrigger }) {
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [syncing, setSyncing] = useState(false);
   const csvImportRef = useRef(null);
 
   // Store-configured cost defaults
@@ -59,6 +60,20 @@ export default function ProductsView({ store, refreshTrigger }) {
       fetchOrders();
     }
   }, [store?.id, refreshTrigger]);
+
+  async function syncAndRefresh() {
+    if (!store?.id || syncing) return;
+    setSyncing(true);
+    try {
+      await fetch(`/api/sync/${store.id}`, { method: 'POST' });
+      await loadPricing();
+      await fetchOrders();
+    } catch (e) {
+      setError('Sync failed: ' + e.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function loadPricing() {
     if (!store?.id) return;
@@ -306,6 +321,14 @@ export default function ProductsView({ store, refreshTrigger }) {
             color:'rgba(167,139,250,0.9)', cursor: importing ? 'not-allowed' : 'pointer', fontSize:'13px', fontWeight:600, transition:'all 0.2s',
           }}>
             <Upload size={15}/> {importing ? 'Importing…' : 'Import Costs CSV'}
+          </button>
+
+          <button onClick={syncAndRefresh} disabled={syncing} style={{
+            display:'flex', alignItems:'center', gap:'7px', padding:'9px 16px', borderRadius:'10px',
+            background: syncing ? 'rgba(167,139,250,0.06)' : 'rgba(167,139,250,0.1)', border:'1px solid rgba(167,139,250,0.25)',
+            color:'rgba(167,139,250,0.9)', cursor: syncing ? 'not-allowed' : 'pointer', fontSize:'13px', fontWeight:600, transition:'all 0.2s', opacity: syncing ? 0.7 : 1,
+          }}>
+            <RefreshCw size={15} style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }}/> {syncing ? 'Syncing…' : 'Sync Now'}
           </button>
 
           <button onClick={exportCSV} style={{
