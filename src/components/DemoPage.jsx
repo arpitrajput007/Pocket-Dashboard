@@ -788,11 +788,152 @@ function LockedTab({ title }) {
   );
 }
 
+// ─── Email gate ───────────────────────────────────────────────────────────────
+const EMAIL_RE = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+const LS_KEY   = 'pocket_demo_email';
+
+function DemoGate({ onUnlock }) {
+  const [email,     setEmail]     = useState('');
+  const [error,     setError]     = useState('');
+  const [loading,   setLoading]   = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const validate = (v) => {
+    if (!v.trim())          return 'Please enter your email address.';
+    if (!EMAIL_RE.test(v))  return 'That doesn\'t look like a valid email. Please check and try again.';
+    return '';
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const err = validate(email);
+    if (err) { setError(err); return; }
+
+    setLoading(true);
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      await fetch(`${apiUrl}/api/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner_email: email.trim().toLowerCase(), comment: 'Demo page lead', type: 'demo_lead' }),
+      });
+    } catch { /* non-critical — still unlock */ }
+
+    localStorage.setItem(LS_KEY, email.trim().toLowerCase());
+    setSubmitted(true);
+    setTimeout(() => onUnlock(email.trim().toLowerCase()), 600);
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:500, display:'flex', alignItems:'center', justifyContent:'center',
+      background:'rgba(3,3,7,0.92)', backdropFilter:'blur(18px) saturate(140%)',
+      backgroundImage:'radial-gradient(ellipse 70% 55% at 15% 10%,rgba(167,139,250,0.12) 0%,transparent 60%),radial-gradient(ellipse 60% 50% at 85% 20%,rgba(34,211,238,0.08) 0%,transparent 60%)',
+      fontFamily:'Outfit,sans-serif',
+    }}>
+
+      {/* Preview glimpse behind — metric snippet */}
+      <div style={{ position:'absolute', inset:0, overflow:'hidden', pointerEvents:'none' }}>
+        <div style={{ position:'absolute', top:'15%', right:'5%', display:'flex', gap:12, opacity:0.12, filter:'blur(2px)', transform:'scale(0.9)' }}>
+          {[{l:'Orders',v:'47'},{l:'Revenue',v:'₹1,48,300'},{l:'Net Profit',v:'+₹47,200'},{l:'CPP',v:'₹381'}].map((m,i)=>(
+            <div key={i} style={{ padding:'18px 20px', borderRadius:14, background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.1)', minWidth:130, textAlign:'center' }}>
+              <div style={{ fontSize:10, color:'#7878a3', textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:8 }}>{m.l}</div>
+              <div style={{ fontSize:24, fontWeight:800, color:i===2?'#10b981':'#eeeef8', fontFamily:'Outfit,sans-serif' }}>{m.v}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ position:'absolute', bottom:'20%', left:'4%', opacity:0.08, filter:'blur(3px)', display:'flex', flexDirection:'column', gap:8 }}>
+          {['Daily Dashboard','Weekly Performance','Monthly Overview','All-Time Analytics','Money In My Pocket'].map((l,i)=>(
+            <div key={i} style={{ padding:'9px 14px', borderRadius:10, background:'rgba(255,255,255,0.05)', color:'rgba(255,255,255,0.5)', fontSize:13, width:200 }}>{l}</div>
+          ))}
+        </div>
+      </div>
+
+      {/* Gate card */}
+      <div style={{ position:'relative', width:'100%', maxWidth:440, margin:'0 20px', padding:'40px 40px 36px',
+        background:'rgba(13,13,26,0.95)', borderRadius:24, border:'1px solid rgba(34,211,238,0.18)',
+        boxShadow:'0 0 60px rgba(34,211,238,0.08), 0 32px 80px rgba(0,0,0,0.6)',
+      }}>
+
+        {/* Brand */}
+        <div style={{ display:'flex', justifyContent:'center', marginBottom:28 }}>
+          <BrandLogo variant="full" iconSize={36} />
+        </div>
+
+        {/* Headline */}
+        <div style={{ textAlign:'center', marginBottom:28 }}>
+          <div style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'5px 14px', borderRadius:999, background:'rgba(16,185,129,0.10)', border:'1px solid rgba(16,185,129,0.25)', marginBottom:16 }}>
+            <span style={{ width:6, height:6, borderRadius:'50%', background:'#10b981', boxShadow:'0 0 6px rgba(16,185,129,0.8)', animation:'livePulse 2s infinite', display:'inline-block' }} />
+            <span style={{ fontSize:12, fontWeight:700, color:'#10b981', letterSpacing:'0.4px' }}>LIVE DEMO DASHBOARD</span>
+          </div>
+          <h2 style={{ margin:'0 0 10px', fontSize:22, fontWeight:800, color:'#eeeef8', letterSpacing:'-0.5px', lineHeight:1.3 }}>
+            A D2C store made <span style={{ color:'#10b981' }}>+₹47,200</span> in profit today.
+          </h2>
+          <p style={{ margin:0, fontSize:14, color:'#7878a3', lineHeight:1.7 }}>
+            Enter your email to explore the full dashboard — orders, profit, RTO, AI co-pilot and more.
+          </p>
+        </div>
+
+        {/* Form */}
+        {submitted ? (
+          <div style={{ textAlign:'center', padding:'20px 0' }}>
+            <div style={{ fontSize:32, marginBottom:10 }}>✅</div>
+            <div style={{ fontSize:15, fontWeight:700, color:'#10b981' }}>Unlocking dashboard…</div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} noValidate>
+            <div style={{ marginBottom: error ? 8 : 14 }}>
+              <input
+                ref={inputRef}
+                type="email"
+                value={email}
+                onChange={e => { setEmail(e.target.value); if (error) setError(''); }}
+                placeholder="you@example.com"
+                autoComplete="email"
+                style={{
+                  width:'100%', boxSizing:'border-box', padding:'13px 16px',
+                  borderRadius:12, fontSize:15, fontFamily:'Outfit,sans-serif',
+                  background:'rgba(255,255,255,0.04)', color:'#eeeef8',
+                  border: error ? '1.5px solid rgba(244,63,94,0.6)' : '1.5px solid rgba(255,255,255,0.12)',
+                  outline:'none', transition:'border-color 0.2s',
+                }}
+                onFocus={e  => { if (!error) e.target.style.borderColor = 'rgba(34,211,238,0.5)'; }}
+                onBlur={e   => { if (!error) e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+              />
+            </div>
+            {error && (
+              <div style={{ fontSize:12, color:'#f43f5e', marginBottom:12, paddingLeft:4 }}>{error}</div>
+            )}
+            <button type="submit" disabled={loading}
+              style={{ width:'100%', padding:'13px 20px', borderRadius:12, border:'none',
+                background: loading ? 'rgba(34,211,238,0.3)' : 'linear-gradient(135deg,#22d3ee,#6366f1)',
+                color:'#000', fontSize:15, fontWeight:800, cursor: loading ? 'not-allowed' : 'pointer',
+                fontFamily:'Outfit,sans-serif', transition:'opacity 0.2s', letterSpacing:'-0.2px',
+              }}>
+              {loading ? 'One moment…' : 'Explore the Dashboard →'}
+            </button>
+          </form>
+        )}
+
+        {/* Trust */}
+        <div style={{ textAlign:'center', marginTop:18, fontSize:12, color:'#4a4a6e' }}>
+          No spam · No credit card · Unsubscribe anytime
+        </div>
+      </div>
+
+      <style>{`@keyframes livePulse{0%,100%{opacity:1;box-shadow:0 0 6px rgba(16,185,129,0.8)}50%{opacity:0.5;box-shadow:0 0 2px rgba(16,185,129,0.3)}}`}</style>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function DemoPage() {
   const [tab, setTab] = useState('dashboard');
   const [copilot, setCopilot] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const [gateEmail, setGateEmail] = useState(() => localStorage.getItem(LS_KEY) || '');
 
   const renderContent = () => {
     switch(tab) {
@@ -874,6 +1015,7 @@ export default function DemoPage() {
     <div style={{ height:'100vh', background:C.bg, fontFamily:'Outfit,sans-serif', overflow:'hidden', position:'relative',
       backgroundImage:'radial-gradient(ellipse 65% 45% at 8% 8%,rgba(167,139,250,0.09) 0%,transparent 60%),radial-gradient(ellipse 55% 40% at 92% 15%,rgba(34,211,238,0.06) 0%,transparent 60%)',
     }}>
+      {!gateEmail && <DemoGate onUnlock={setGateEmail} />}
 
       {/* ── Demo notice ── */}
       {!noticeDismissed && (
@@ -910,9 +1052,9 @@ export default function DemoPage() {
             <a href="/signup" style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 12px', borderRadius:12, background:'rgba(34,211,238,0.07)', border:'1px solid rgba(34,211,238,0.18)', textDecoration:'none', transition:'all 0.2s' }}
               onMouseEnter={e=>{ e.currentTarget.style.background='rgba(34,211,238,0.13)'; e.currentTarget.style.borderColor='rgba(34,211,238,0.38)'; }}
               onMouseLeave={e=>{ e.currentTarget.style.background='rgba(34,211,238,0.07)'; e.currentTarget.style.borderColor='rgba(34,211,238,0.18)'; }}>
-              <div style={{ width:32, height:32, borderRadius:9, flexShrink:0, background:'linear-gradient(135deg,#22d3ee,#6366f1)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:800, color:'#000' }}>D</div>
+              <div style={{ width:32, height:32, borderRadius:9, flexShrink:0, background:'linear-gradient(135deg,#22d3ee,#6366f1)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:800, color:'#000' }}>{gateEmail ? gateEmail[0].toUpperCase() : 'D'}</div>
               <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:12, fontWeight:600, color:C.textMain, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>demo@yourstore.com</div>
+                <div style={{ fontSize:12, fontWeight:600, color:C.textMain, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{gateEmail || 'demo@yourstore.com'}</div>
                 <div style={{ fontSize:10.5, color:C.primary, marginTop:1, fontWeight:700 }}>Start free — 3 months →</div>
               </div>
             </a>
