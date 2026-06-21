@@ -65,7 +65,13 @@ export default function ProductsView({ store, refreshTrigger }) {
     if (!store?.id || syncing) return;
     setSyncing(true);
     try {
-      await fetch(`/api/sync/${store.id}`, { method: 'POST' });
+      // Use the synchronous products endpoint — waits until Shopify fetch is done
+      // before returning, so loadPricing() reads a populated table.
+      const res = await fetch(`/api/sync-products/${store.id}`, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Sync failed (${res.status})`);
+      }
       await loadPricing();
       await fetchOrders();
     } catch (e) {
