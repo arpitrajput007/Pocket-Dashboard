@@ -968,48 +968,149 @@ app.post('/api/copilot', async (req, res) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const { data: orders, error } = await supabase
-      .from('orders')
-      .select('id, total_price, created_at, tags, line_items')
-      .eq('store_id', storeId)
-      .gte('created_at', thirtyDaysAgo.toISOString());
+    // Fetch orders, products and ad costs in parallel
+    const [ordersRes, productsRes, adCostsRes, storeRes] = await Promise.all([
+      supabase.from('orders').select('id, total_price, created_at, tags, line_items').eq('store_id', storeId).gte('created_at', thirtyDaysAgo.toISOString()),
+      supabase.from('products').select('title, sku, cost_price, selling_price, shipping_cost').eq('store_id', storeId).limit(100),
+      supabase.from('ad_costs').select('amount, date, platform').eq('store_id', storeId).gte('date', thirtyDaysAgo.toISOString().split('T')[0]),
+      supabase.from('stores').select('store_name, dashboard_features').eq('id', storeId).single(),
+    ]);
 
-    if (error) throw error;
+    const orders   = ordersRes.data  || [];
+    const products = productsRes.data || [];
+    const adCosts  = adCostsRes.data  || [];
+    const store    = storeRes.data    || {};
 
-    let totalRevenue = 0;
-    let totalOrders = orders.length;
-    let rtoCount = 0;
-
-    orders.forEach(o => {
-      totalRevenue += parseFloat(o.total_price || 0);
-      const tags = (o.tags || '').toLowerCase();
-      if (tags.includes('rto') || tags.includes('return to origin') || tags.includes('returned')) {
-        rtoCount++;
-      }
+    // Build product cost map
+    const costMap = {};
+    products.forEach(p => {
+      const key = (p.title || '').toLowerCase().trim();
+      if (key) costMap[key] = { cost: parseFloat(p.cost_price || 0), shipping: parseFloat(p.shipping_cost || 0) };
     });
 
-    const rtoRate = totalOrders > 0 ? ((rtoCount / totalOrders) * 100).toFixed(1) : 0;
+    // Per-order and aggregate stats
+    let totalRevenue = 0, totalOrders = orders.length;
+    let rtoCount = 0, deliveredCount = 0, codCount = 0, canceledCount = 0;
+    const productMap = {}; // title -> { orders, rto, revenue, qty }
+
+    orders.forEach(o => {
+      const rev  = parseFloat(o.total_price || 0);
+      const tags = (o.tags || '').toLowerCase();
+      const isRTO       = tags.includes('rto') || tags.includes('returned') || tags.includes('undelivered') || tags.includes('ndr');
+      const isDelivered = tags.includes('delivered') && !isRTO;
+      const isCOD       = tags.includes('cod');
+      const isCanceled  = tags.includes('cancel');
+
+      totalRevenue += rev;
+      if (isRTO)       rtoCount++;
+      if (isDelivered) deliveredCount++;
+      if (isCOD)       codCount++;
+      if (isCanceled)  canceledCount++;
+
+      // Product-level aggregation from line_items
+      const items = Array.isArray(o.line_items) ? o.line_items : [];
+      items.forEach(item => {
+        const title = (item.title || item.name || 'Unknown').trim();
+        if (!productMap[title]) productMap[title] = { orders: 0, rto: 0, revenue: 0, qty: 0 };
+        productMap[title].orders++;
+        productMap[title].qty    += (item.quantity || 1);
+        productMap[title].revenue += parseFloat(item.price || 0) * (item.quantity || 1);
+        if (isRTO) productMap[title].rto++;
+      });
+    });
+
+    const adSpend    = adCosts.reduce((s, a) => s + parseFloat(a.amount || 0), 0);
+    const rtoRate    = totalOrders > 0 ? ((rtoCount / totalOrders) * 100).toFixed(1) : 0;
+    const delRate    = totalOrders > 0 ? ((deliveredCount / totalOrders) * 100).toFixed(1) : 0;
+    const codRate    = totalOrders > 0 ? ((codCount / totalOrders) * 100).toFixed(1) : 0;
+    const df         = store.dashboard_features || {};
+    const cogsRate   = (df.biz_cogs_pct ?? 43) / 100;
+    const shipPer    = df.biz_shipping_per ?? 150;
+    const rtoCostPer = df.biz_rto_cost ?? 600;
+    const cogs       = totalRevenue * cogsRate;
+    const shipping   = totalOrders * shipPer;
+    const rtoLoss    = rtoCount * rtoCostPer;
+    const payFees    = totalRevenue * ((totalOrders - codCount) / Math.max(totalOrders, 1)) * 0.018;
+    const netProfit  = totalRevenue - cogs - adSpend - shipping - rtoLoss - payFees;
+    const mer        = adSpend > 0 ? (totalRevenue / adSpend).toFixed(2) : 'N/A';
+    const aov        = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
+
+    // Top products by orders (max 10)
+    const topProducts = Object.entries(productMap)
+      .sort((a, b) => b[1].orders - a[1].orders)
+      .slice(0, 10)
+      .map(([title, d]) => ({
+        title,
+        orders: d.orders,
+        rto: d.rto,
+        rtoRate: d.orders > 0 ? ((d.rto / d.orders) * 100).toFixed(1) : '0',
+        revenue: Math.round(d.revenue),
+      }));
+
+    // Products sorted by RTO rate (min 3 orders)
+    const rtoProducts = Object.entries(productMap)
+      .filter(([, d]) => d.orders >= 3)
+      .sort((a, b) => (b[1].rto / b[1].orders) - (a[1].rto / a[1].orders))
+      .slice(0, 5)
+      .map(([title, d]) => ({
+        title,
+        orders: d.orders,
+        rto: d.rto,
+        rtoRate: ((d.rto / d.orders) * 100).toFixed(1),
+      }));
+
+    const inr = n => '₹' + Math.round(n).toLocaleString('en-IN');
+
+    const systemPrompt = `You are the AI Co-Pilot for Pocket Dashboard — an analytics tool built for Indian D2C e-commerce founders.
+You have REAL access to the following store data for the last 30 days. Use ONLY this data to answer questions. Never say you don't have access to data — if it's below, you have it.
+
+STORE: ${store.store_name || 'Unknown Store'}
+
+BUSINESS OVERVIEW (Last 30 Days):
+- Total Orders: ${totalOrders}
+- Total Revenue: ${inr(totalRevenue)}
+- Ad Spend: ${inr(adSpend)}${adSpend === 0 ? ' (no ad costs logged yet)' : ''}
+- Net Profit (estimated): ${inr(netProfit)} (after COGS, shipping, RTO losses, payment fees, ad spend)
+- RTO Orders: ${rtoCount} (${rtoRate}% RTO rate)
+- Delivered Orders: ${deliveredCount} (${delRate}% delivery rate)
+- COD Orders: ${codCount} (${codRate}% of total)
+- Canceled Orders: ${canceledCount}
+- Average Order Value: ${inr(aov)}
+- Marketing Efficiency Ratio (MER): ${mer}x${adSpend === 0 ? ' (N/A — no ad spend logged)' : ''}
+
+COST BREAKDOWN:
+- Revenue: ${inr(totalRevenue)}
+- COGS (~${Math.round(cogsRate * 100)}%): ${inr(cogs)}
+- Shipping: ${inr(shipping)}
+- Ad Spend: ${inr(adSpend)}
+- RTO Losses: ${inr(rtoLoss)} (${rtoCount} returns × ${inr(rtoCostPer)} per return)
+- Payment Fees: ${inr(payFees)}
+- Net Profit: ${inr(netProfit)}
+
+TOP PRODUCTS BY ORDERS:
+${topProducts.length > 0 ? topProducts.map(p => `- ${p.title}: ${p.orders} orders, ${p.rto} RTO (${p.rtoRate}% RTO rate), ${inr(p.revenue)} revenue`).join('\n') : '- No product-level data available (line_items may not be synced)'}
+
+PRODUCTS WITH HIGHEST RTO RATE (min 3 orders):
+${rtoProducts.length > 0 ? rtoProducts.map((p, i) => `${i + 1}. ${p.title}: ${p.rto}/${p.orders} orders returned (${p.rtoRate}% RTO rate)`).join('\n') : '- No product RTO data available or all products have fewer than 3 orders'}
+
+${products.length > 0 ? `CATALOG SIZE: ${products.length} products synced` : 'CATALOG: No products synced yet'}
+
+INSTRUCTIONS:
+- Answer using the real data above. Be specific with numbers.
+- If a metric is "N/A" or 0 because data wasn't logged, say so and explain how to log it.
+- Keep answers concise, specific, and actionable.
+- Use bullet points for lists. Use bold for key numbers.
+- Focus on Indian D2C context: COD/prepaid split, RTO management, logistics costs.`;
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    const systemPrompt = `You are the AI Co-Pilot for a D2C E-commerce dashboard called "Pocket Dashboard".
-You are an expert in D2C e-commerce, specifically in the Indian market (handling COD, RTOs, Net Profit).
-Here is the live data context for this user's store over the last 30 days:
-- Total Orders: ${totalOrders}
-- Total Revenue: ₹${totalRevenue.toLocaleString('en-IN')}
-- RTO / Returned Orders: ${rtoCount} (${rtoRate}%)
-
-Your job is to answer the user's questions about their business using this context.
-Keep your answers concise, highly actionable, and professional. Use formatting (bullet points, bold text) where appropriate.`;
-
     const chatResponse = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
         ...messages.map(m => ({ role: m.role, content: m.content }))
       ],
-      temperature: 0.7,
-      max_tokens: 500,
+      temperature: 0.4,
+      max_tokens: 600,
     });
 
     res.json({ reply: chatResponse.choices[0].message.content });
