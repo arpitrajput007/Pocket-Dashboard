@@ -4,7 +4,7 @@ import BrandLogo from './BrandLogo';
 import {
   LayoutDashboard, Link2, Settings, Headphones,
   LogOut, ChevronRight, Unplug, ShieldCheck, Sparkles, SlidersHorizontal, Package, DollarSign,
-  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone
+  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb
 } from 'lucide-react';
 
 // Lazy load dashboard sub-views for performance
@@ -356,6 +356,7 @@ function NavItem({ icon: Icon, label, active, onClick, badge, tabKey }) {
 import ConnectShopifyStep from './ConnectShopifyStep';
 const SupportPage = lazy(() => import('./SupportPage'));
 const SettingsPage = lazy(() => import('./SettingsPage'));
+const FeatureRequests = lazy(() => import('./FeatureRequests'));
 const NpsWidget = lazy(() => import('./NpsWidget'));
 
 /* ─────────────────────────────────────────────
@@ -783,7 +784,7 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
    MAIN PERSONAL PANEL
 ───────────────────────────────────────────── */
 export default function PersonalPanel({ session, store, onStoreConnected }) {
-  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','sheet','products','pricing','connect','ads','advanced','settings','support']);
+  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','sheet','products','pricing','connect','ads','advanced','settings','support','features']);
   const hashTab = window.location.hash.replace('#', '');
   const [activeTab, setActiveTab] = useState(validTabs.has(hashTab) ? hashTab : 'dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -858,6 +859,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     advanced: 'Advanced Settings',
     settings: 'Settings',
     support: 'Talk to Support',
+    features: 'Feature Requests',
   };
 
   return (
@@ -1036,6 +1038,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             </div>
             <NavItem icon={SlidersHorizontal} label="Advanced Settings" active={activeTab === 'advanced'} onClick={() => { setActiveTab('advanced'); setMobileSidebarOpen(false); }} tabKey="advanced" />
             <NavItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setMobileSidebarOpen(false); }} tabKey="settings" />
+            <NavItem icon={Lightbulb} label="Feature Requests" active={activeTab === 'features'} onClick={() => { setActiveTab('features'); setMobileSidebarOpen(false); }} tabKey="features" />
             <NavItem icon={Headphones} label="Talk to Support" active={activeTab === 'support'} onClick={() => { setActiveTab('support'); setMobileSidebarOpen(false); }} tabKey="support" />
           </nav>
 
@@ -1156,7 +1159,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
               <SetupCard store={store} onNavigate={(tab) => { setActiveTab(tab); setMobileSidebarOpen(false); }} />
             )}
             <Suspense fallback={<ViewLoading />}>
-              {isTrialExpired && !['pricing', 'connect', 'support', 'settings'].includes(activeTab) ? (
+              {isTrialExpired && !['pricing', 'connect', 'support', 'settings', 'features'].includes(activeTab) ? (
                 <TrialExpiredState onUpgradeClick={() => setActiveTab('pricing')} />
               ) : (
                 <>
@@ -1207,6 +1210,9 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   {activeTab === 'pricing' && <PricingView store={store} />}
                   {activeTab === 'settings' && (
                     <SettingsPage session={session} store={store} />
+                  )}
+                  {activeTab === 'features' && (
+                    <FeatureRequests session={session} store={store} />
                   )}
                   {activeTab === 'support' && (
                     <SupportPage session={session} />

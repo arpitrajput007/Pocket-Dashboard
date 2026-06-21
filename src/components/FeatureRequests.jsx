@@ -15,7 +15,7 @@ function useLocalVotes() {
   return stored ? JSON.parse(stored) : {};
 }
 
-export default function FeatureRequests({ session, store, hideHeader = false }) {
+export default function FeatureRequests({ session, store }) {
   const [localVotes, setLocalVotes] = useState(useLocalVotes);
   const [features, setFeatures] = useState(() =>
     INITIAL_FEATURES.map(f => ({ ...f, votes: localVotes[f.id] ? 1 : 0, voted: !!localVotes[f.id] }))
@@ -61,19 +61,17 @@ export default function FeatureRequests({ session, store, hideHeader = false }) 
   const sorted = [...features].sort((a, b) => b.votes - a.votes);
 
   return (
-    <div style={{ maxWidth: 680, margin: '0 auto', animation: hideHeader ? 'none' : 'fadeInUp 0.35s ease forwards' }}>
+    <div style={{ maxWidth: 680, margin: '0 auto', animation: 'fadeInUp 0.35s ease forwards' }}>
 
-      {/* Header — hidden when embedded inside another page */}
-      {!hideHeader && (
-        <div style={{ marginBottom: 28 }}>
-          <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 26, fontWeight: 800, color: '#f1f5f9', margin: '0 0 8px', letterSpacing: '-0.4px' }}>
-            Feature Requests
-          </h2>
-          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', margin: 0, lineHeight: 1.7 }}>
-            Vote for features you want. The most-requested ones get built first. Your feedback directly shapes the roadmap.
-          </p>
-        </div>
-      )}
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 26, fontWeight: 800, color: '#f1f5f9', margin: '0 0 8px', letterSpacing: '-0.4px' }}>
+          Feature Requests
+        </h2>
+        <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', margin: 0, lineHeight: 1.7 }}>
+          Vote for features you want. The most-requested ones get built first. Your feedback directly shapes the roadmap.
+        </p>
+      </div>
 
       {/* Feature list */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { User, Bell, LogOut, Store } from 'lucide-react';
+import { User, Bell, CreditCard } from 'lucide-react';
 import { supabase } from '../supabaseClient';
-import FeatureRequests from './FeatureRequests';
 
 function Toggle({ on, onChange }) {
   return (
@@ -41,11 +40,11 @@ function Section({ title, icon, children }) {
   );
 }
 
-function InfoRow({ label, value, last }) {
+function Row({ label, children, last }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: last ? 'none' : '1px solid rgba(255,255,255,0.06)' }}>
-      <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.45)' }}>{label}</span>
-      <span style={{ fontSize: 13.5, fontWeight: 600, color: '#e2e8f0' }}>{value}</span>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '14px 20px', borderBottom: last ? 'none' : '1px solid rgba(255,255,255,0.06)' }}>
+      <span style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.45)', flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 13.5, fontWeight: 600, color: '#e2e8f0', textAlign: 'right' }}>{children}</span>
     </div>
   );
 }
@@ -70,9 +69,7 @@ export default function SettingsPage({ session, store }) {
     rto_alert: !!features.rto_alert_enabled,
     weekly_email: !!features.weekly_email_enabled,
   });
-  const [saving, setSaving] = useState(null);
 
-  // Re-sync if store prop updates
   useEffect(() => {
     const f = store?.dashboard_features || {};
     setNotifs({
@@ -86,7 +83,6 @@ export default function SettingsPage({ session, store }) {
     if (!store?.id) return;
     const updated = { ...notifs, [key]: !notifs[key] };
     setNotifs(updated);
-    setSaving(key);
     const featureKey = key === 'daily_digest' ? 'daily_digest_enabled'
       : key === 'rto_alert' ? 'rto_alert_enabled'
       : 'weekly_email_enabled';
@@ -94,17 +90,28 @@ export default function SettingsPage({ session, store }) {
       .from('stores')
       .update({ dashboard_features: { ...features, [featureKey]: updated[key] } })
       .eq('id', store.id);
-    setSaving(null);
   };
 
+  // Plan info
   const plan = store?.plan_type || store?.subscription_plan || 'free';
   const isPro = plan === 'pro';
   const isStarter = plan === 'starter';
   const planLabel = isPro ? 'Pro Plan' : isStarter ? 'Starter Plan' : 'Free Trial';
   const planColor = isPro ? '#a78bfa' : isStarter ? '#38bdf8' : '#fbbf24';
+  const planBg = isPro ? 'rgba(167,139,250,0.1)' : isStarter ? 'rgba(56,189,248,0.1)' : 'rgba(251,191,36,0.1)';
+  const planBorder = isPro ? 'rgba(167,139,250,0.3)' : isStarter ? 'rgba(56,189,248,0.3)' : 'rgba(251,191,36,0.3)';
+
+  // Trial days remaining
+  const storeCreatedAt = store?.created_at ? new Date(store.created_at) : null;
+  const trialDaysTotal = 210; // free until Jan 2027 (~7 months from June 2026 launch)
+  const daysElapsed = storeCreatedAt ? Math.floor((Date.now() - storeCreatedAt.getTime()) / 86400000) : 0;
+  const daysLeft = Math.max(0, trialDaysTotal - daysElapsed);
 
   const email = session?.user?.email || '—';
-  const domain = store?.shopify_domain ? `${store.shopify_domain}.myshopify.com` : '—';
+  const domain = store?.shopify_domain ? `${store.shopify_domain}.myshopify.com` : 'Not connected';
+  const connectedSince = storeCreatedAt
+    ? storeCreatedAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '—';
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto', animation: 'fadeInUp 0.35s ease forwards' }}>
@@ -113,64 +120,82 @@ export default function SettingsPage({ session, store }) {
           Settings
         </h2>
         <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', margin: 0 }}>
-          Manage your account and preferences.
+          Manage your account and notification preferences.
         </p>
       </div>
 
       {/* Account */}
       <Section title="Account" icon={<User size={15} color="#818cf8" />}>
-        <InfoRow label="Email" value={email} />
-        <InfoRow label="Store" value={domain} />
-        <InfoRow
-          label="Plan"
-          value={<span style={{ color: planColor, fontWeight: 700 }}>{planLabel}</span>}
-        />
+        <Row label="Email">{email}</Row>
+        <Row label="Store domain">
+          <span style={{ color: store?.shopify_domain ? '#e2e8f0' : 'rgba(255,255,255,0.3)', fontStyle: store?.shopify_domain ? 'normal' : 'italic' }}>
+            {domain}
+          </span>
+        </Row>
+        <Row label="Connected since">{connectedSince}</Row>
+        <Row label="Plan" last>
+          <span style={{ color: planColor, background: planBg, border: `1px solid ${planBorder}`, borderRadius: 999, padding: '3px 12px', fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>
+            {planLabel}
+          </span>
+        </Row>
+      </Section>
+
+      {/* Plan & Billing */}
+      <Section title="Plan & Billing" icon={<CreditCard size={15} color="#818cf8" />}>
+        {!isPro && !isStarter && (
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: '#fbbf24', marginBottom: 3 }}>🎁 Free Beta Access</div>
+                <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
+                  All features are free until January 2027. Early users will receive a discount when paid plans launch.
+                </div>
+              </div>
+              {daysLeft > 0 && (
+                <div style={{ textAlign: 'center', flexShrink: 0 }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#fbbf24', lineHeight: 1 }}>{daysLeft}</div>
+                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>days left</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <Row label="Current plan">
+          <span style={{ color: planColor, fontWeight: 700 }}>{planLabel}</span>
+        </Row>
+        <Row label="Billing cycle">
+          <span style={{ color: 'rgba(255,255,255,0.35)', fontStyle: 'italic' }}>Free — no card required</span>
+        </Row>
         <div style={{ padding: '14px 20px' }}>
-          <button
-            onClick={() => supabase.auth.signOut()}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 10, border: '1px solid rgba(248,113,133,0.3)', background: 'rgba(248,113,133,0.06)', color: '#f87171', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,133,0.12)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,133,0.06)'; }}
-          >
-            <LogOut size={14} />
-            Sign out
-          </button>
+          <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.3)', lineHeight: 1.6 }}>
+            Paid plans with advanced features (AI recommendations, unlimited team members, API integrations) will be available in early 2027.
+            Early users will be notified first and receive a discount.
+          </div>
         </div>
       </Section>
 
       {/* Notification Preferences */}
-      <Section title="Notifications" icon={<Bell size={15} color="#818cf8" />}>
+      <Section title="Notification Preferences" icon={<Bell size={15} color="#818cf8" />}>
         <NotifRow
           label="Daily email digest"
-          sub="Receive yesterday's key metrics every morning at 9 AM IST"
+          sub="Yesterday's key metrics delivered every morning at 9 AM IST"
           on={notifs.daily_digest}
           onChange={() => toggleNotif('daily_digest')}
         />
         <NotifRow
           label="RTO spike alerts"
-          sub="Get notified when your RTO rate rises above normal levels"
+          sub="Get notified when your return-to-origin rate rises above normal"
           on={notifs.rto_alert}
           onChange={() => toggleNotif('rto_alert')}
         />
         <NotifRow
           label="Weekly summary email"
-          sub="Every Monday — your week-over-week revenue and profit snapshot"
+          sub="Every Monday — week-over-week revenue and profit snapshot"
           on={notifs.weekly_email}
           onChange={() => toggleNotif('weekly_email')}
           last
         />
       </Section>
-
-      {/* Feature Requests */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 9, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: 15 }}>✦</span>
-          </div>
-          <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 15, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>Feature Requests</h2>
-        </div>
-        <FeatureRequests session={session} store={store} hideHeader />
-      </div>
     </div>
   );
 }
