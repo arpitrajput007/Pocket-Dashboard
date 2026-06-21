@@ -188,32 +188,41 @@ export default function CopilotChat({ store, isOpen, onClose }) {
         `}</style>
 
         {/* ── Header ── */}
-        <div style={{ padding:'16px 18px', display:'flex', alignItems:'center', gap:12, borderBottom:'1px solid rgba(255,255,255,0.06)', background:'linear-gradient(90deg,rgba(167,139,250,0.05),transparent)', flexShrink:0 }}>
-          <div style={{ width:34, height:34, borderRadius:10, background:'linear-gradient(135deg,#a78bfa,#38bdf8)', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 0 18px -4px rgba(167,139,250,0.5)', flexShrink:0 }}>
-            <Sparkles size={16} color="#000" />
-          </div>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:14, fontWeight:700, color:'#fff', fontFamily:'Outfit', letterSpacing:'-0.2px' }}>AI Co-Pilot</div>
-            <div style={{ fontSize:10.5, color:'rgba(45,212,160,0.9)', display:'flex', alignItems:'center', gap:4, marginTop:1 }}>
-              <span style={{ width:5, height:5, borderRadius:'50%', background:'#2dd4a0', display:'inline-block' }} />
-              Online &amp; Analyzing
+        <div style={{ padding:'14px 16px', borderBottom:'1px solid rgba(255,255,255,0.06)', background:'linear-gradient(90deg,rgba(167,139,250,0.05),transparent)', flexShrink:0 }}>
+          {/* Top row: icon + title + close */}
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{ width:32, height:32, borderRadius:9, background:'linear-gradient(135deg,#a78bfa,#38bdf8)', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 0 14px -4px rgba(167,139,250,0.6)', flexShrink:0 }}>
+              <Sparkles size={15} color="#000" />
             </div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:'#fff', letterSpacing:'-0.2px' }}>AI Co-Pilot</div>
+              <div style={{ fontSize:10.5, color:'rgba(45,212,160,0.85)', display:'flex', alignItems:'center', gap:4, marginTop:1 }}>
+                <span style={{ width:5, height:5, borderRadius:'50%', background:'#2dd4a0', display:'inline-block' }} />
+                Online &amp; Analyzing
+              </div>
+            </div>
+            <button onClick={onClose}
+              style={{ background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, width:28, height:28, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', flexShrink:0 }}>
+              <X size={14} color="rgba(255,255,255,0.6)" />
+            </button>
           </div>
 
-          {/* Action buttons */}
-          <button className="copilot-btn" onClick={newChat} title="New chat"
-            style={{ background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:8, width:30, height:30, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', transition:'opacity 0.15s', flexShrink:0 }}>
-            <Plus size={14} color="rgba(255,255,255,0.7)" />
-          </button>
-          <button className="copilot-btn" onClick={() => setShowHistory(v => !v)} title="Chat history"
-            style={{ background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:8, width:30, height:30, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', transition:'opacity 0.15s', flexShrink:0, position:'relative' }}>
-            <ChevronDown size={14} color="rgba(255,255,255,0.7)" style={{ transform: showHistory ? 'rotate(180deg)' : 'none', transition:'transform 0.2s' }} />
-            {sessions.length > 1 && <span style={{ position:'absolute', top:-3, right:-3, width:14, height:14, borderRadius:'50%', background:'#a78bfa', fontSize:9, fontWeight:800, color:'#000', display:'flex', alignItems:'center', justifyContent:'center' }}>{sessions.length}</span>}
-          </button>
-          <button className="copilot-btn" onClick={onClose} title="Close"
-            style={{ background:'transparent', border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', padding:4, transition:'opacity 0.15s', flexShrink:0 }}>
-            <X size={18} color="rgba(255,255,255,0.5)" />
-          </button>
+          {/* Bottom row: action buttons */}
+          <div style={{ display:'flex', gap:6, marginTop:10 }}>
+            <button onClick={newChat}
+              style={{ display:'flex', alignItems:'center', gap:5, padding:'5px 10px', background:'rgba(167,139,250,0.12)', border:'1px solid rgba(167,139,250,0.25)', borderRadius:7, color:'#c4b5fd', fontSize:11.5, fontWeight:600, cursor:'pointer', transition:'all 0.15s' }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(167,139,250,0.2)'; e.currentTarget.style.borderColor='rgba(167,139,250,0.4)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(167,139,250,0.12)'; e.currentTarget.style.borderColor='rgba(167,139,250,0.25)'; }}>
+              <Plus size={12} /> New Chat
+            </button>
+            <button onClick={() => setShowHistory(v => !v)}
+              style={{ display:'flex', alignItems:'center', gap:5, padding:'5px 10px', background: showHistory ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:7, color:'rgba(255,255,255,0.55)', fontSize:11.5, fontWeight:500, cursor:'pointer', transition:'all 0.15s' }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,255,255,0.08)'; e.currentTarget.style.color='rgba(255,255,255,0.8)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background= showHistory ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)'; e.currentTarget.style.color='rgba(255,255,255,0.55)'; }}>
+              History {sessions.length > 1 && <span style={{ background:'rgba(167,139,250,0.3)', color:'#c4b5fd', borderRadius:4, padding:'1px 5px', fontSize:10, fontWeight:700 }}>{sessions.length}</span>}
+              <ChevronDown size={11} style={{ transform: showHistory ? 'rotate(180deg)' : 'none', transition:'transform 0.2s' }} />
+            </button>
+          </div>
         </div>
 
         {/* ── Session History Dropdown ── */}
