@@ -22,17 +22,17 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
     }
   }, [store?.id, refreshTrigger]);
 
-  async function fetchOrders() {
+  async function fetchOrders(s = startDate, e = endDate) {
     if (!store?.id) return;
     setLoading(true);
-    
+
     const { data } = await supabase
       .from('orders')
       .select('tags')
       .eq('store_id', store.id)
-      .gte('created_at', startDate + 'T00:00:00')
-      .lte('created_at', endDate + 'T23:59:59');
-      
+      .gte('created_at', s + 'T00:00:00')
+      .lte('created_at', e + 'T23:59:59');
+
     setOrders(data || []);
     setLoading(false);
   }
@@ -41,15 +41,21 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days);
-    setStartDate(start.toISOString().split('T')[0]);
-    setEndDate(end.toISOString().split('T')[0]);
+    const s = start.toISOString().split('T')[0];
+    const e = end.toISOString().split('T')[0];
+    setStartDate(s);
+    setEndDate(e);
+    fetchOrders(s, e);
   }
-  
+
   function setThisMonth() {
     const end = new Date();
     const start = new Date(end.getFullYear(), end.getMonth(), 1);
-    setStartDate(start.toISOString().split('T')[0]);
-    setEndDate(end.toISOString().split('T')[0]);
+    const s = start.toISOString().split('T')[0];
+    const e = end.toISOString().split('T')[0];
+    setStartDate(s);
+    setEndDate(e);
+    fetchOrders(s, e);
   }
 
   const stats = useMemo(() => {

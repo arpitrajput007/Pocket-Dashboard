@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ThumbsUp, Lightbulb } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 
 const INITIAL_FEATURES = [
   { id: 1, title: 'Meta & Google Ads API integration', desc: 'Automatically pull ad spend from Meta/Google instead of manual entry', votes: 0, voted: false },
@@ -10,30 +11,57 @@ const INITIAL_FEATURES = [
   { id: 6, title: 'Mobile app', desc: 'iOS and Android app to check your numbers on the go', votes: 0, voted: false },
 ];
 
-function useLocalVotes() {
-  const stored = localStorage.getItem('pocket_feature_votes');
-  return stored ? JSON.parse(stored) : {};
-}
-
 export default function FeatureRequests({ session, store }) {
-  const [localVotes, setLocalVotes] = useState(useLocalVotes);
+  // Supabase votes take priority over localStorage (cross-device sync)
+  const remoteVotes = store?.dashboard_features?.feature_votes || {};
+  const localVotes  = JSON.parse(localStorage.getItem('pocket_feature_votes') || '{}');
+  const merged      = { ...localVotes, ...remoteVotes };
+
+  const [votes, setVotes] = useState(merged);
   const [features, setFeatures] = useState(() =>
-    INITIAL_FEATURES.map(f => ({ ...f, votes: localVotes[f.id] ? 1 : 0, voted: !!localVotes[f.id] }))
+    INITIAL_FEATURES.map(f => ({ ...f, votes: merged[f.id] ? 1 : 0, voted: !!merged[f.id] }))
   );
   const [newTitle, setNewTitle] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  const handleVote = (id) => {
-    const updated = features.map(f => {
-      if (f.id !== id) return f;
-      const nowVoted = !f.voted;
-      return { ...f, voted: nowVoted, votes: nowVoted ? f.votes + 1 : f.votes - 1 };
+  // If store loads after initial render, sync remote votes in
+  useEffect(() => {
+    const remote = store?.dashboard_features?.feature_votes || {};
+    if (Object.keys(remote).length === 0) return;
+    setVotes(prev => {
+      const next = { ...prev, ...remote };
+      setFeatures(INITIAL_FEATURES.map(f => ({ ...f, votes: next[f.id] ? 1 : 0, voted: !!next[f.id] })));
+      return next;
     });
-    setFeatures(updated);
-    const newVotes = { ...localVotes, [id]: !localVotes[id] };
-    setLocalVotes(newVotes);
-    localStorage.setItem('pocket_feature_votes', JSON.stringify(newVotes));
+  }, [store?.id]);
+
+  const handleVote = async (id) => {
+    const nowVoted = !votes[id];
+    const nextVotes = { ...votes, [id]: nowVoted };
+
+    // Optimistic UI update
+    setVotes(nextVotes);
+    setFeatures(prev => prev.map(f => {
+      if (f.id !== id) return f;
+      return { ...f, voted: nowVoted, votes: nowVoted ? f.votes + 1 : f.votes - 1 };
+    }));
+
+    // Persist to localStorage (fast, offline-safe)
+    localStorage.setItem('pocket_feature_votes', JSON.stringify(nextVotes));
+
+    // Persist to Supabase (cross-device sync)
+    if (store?.id) {
+      await supabase
+        .from('stores')
+        .update({
+          dashboard_features: {
+            ...(store.dashboard_features || {}),
+            feature_votes: nextVotes,
+          }
+        })
+        .eq('id', store.id);
+    }
   };
 
   const handleSubmit = async e => {
