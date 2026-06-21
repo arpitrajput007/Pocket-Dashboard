@@ -226,6 +226,38 @@ async function syncStoreData(storeId, { forceFullSync = false, fromDate = null, 
     url = next ? next[1] : null;
   }
 
+  // Sync product catalog so Products view shows all items, not just sold ones
+  try {
+    let productsUrl = `https://${shopify_domain}.myshopify.com/admin/api/2024-01/products.json?limit=250&fields=id,title,variants`;
+    let totalProducts = 0;
+    while (productsUrl) {
+      const pRes = await fetch(productsUrl, { method: 'GET', headers });
+      if (!pRes.ok) { console.warn('[Sync] Products API error:', pRes.status); break; }
+      const { products: shopifyProducts } = await pRes.json();
+      if (!shopifyProducts || shopifyProducts.length === 0) break;
+
+      // One row per product — first variant provides default SKU + price
+      // cost_price / shipping_cost are NOT included so existing user-entered values are preserved
+      const productRows = shopifyProducts.map(p => ({
+        store_id: storeId,
+        shopify_product_id: String(p.id),
+        title: p.title,
+        sku: p.variants?.[0]?.sku || '',
+        selling_price: parseFloat(p.variants?.[0]?.price || 0),
+      }));
+
+      await supabase.from('products').upsert(productRows, { onConflict: 'store_id,shopify_product_id' });
+      totalProducts += productRows.length;
+
+      const pLink = pRes.headers.get('Link');
+      const pNext = pLink ? pLink.match(/<([^>]+)>;\s*rel="next"/) : null;
+      productsUrl = pNext ? pNext[1] : null;
+    }
+    console.log(`[Sync] ✅ Product catalog synced: ${totalProducts} products`);
+  } catch (e) {
+    console.warn('[Sync] Product catalog sync failed (non-fatal):', e.message);
+  }
+
   // Record successful sync time — enables incremental sync on next run
   await supabase
     .from('stores')

@@ -45,6 +45,7 @@ export default function ProductsView({ store, refreshTrigger }) {
   const [sortCol, setSortCol] = useState('revenue');
   const [sortDir, setSortDir] = useState('desc');
   const [fetched, setFetched] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState([]);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
   const csvImportRef = useRef(null);
@@ -65,8 +66,10 @@ export default function ProductsView({ store, refreshTrigger }) {
     if (data) {
       const history = await loadCostHistory(supabase, store.id);
       const map = {};
-      data.forEach(p => { p._costHistory = history[p.id] || null; map[p.title] = p; map[p.sku] = p; });
+      data.forEach(p => { p._costHistory = history[p.id] || null; map[p.title] = p; if (p.sku) map[p.sku] = p; });
       setPricing(map);
+      setCatalogProducts(data);
+      if (data.length > 0) setFetched(true);
     }
   }
 
@@ -86,7 +89,8 @@ export default function ProductsView({ store, refreshTrigger }) {
   }
 
   const products = useMemo(() => {
-    const stats = {};
+    // Phase 1: build date-accurate order stats per product title
+    const orderStats = {};
     orders.forEach(order => {
       const items = order.line_items || [];
       const tags = (order.tags || []);
@@ -95,32 +99,47 @@ export default function ProductsView({ store, refreshTrigger }) {
       const orderDate = (order.created_at || '').slice(0, 10);
       items.forEach(item => {
         const title = item.title || 'Unknown';
-        if (!stats[title]) stats[title] = { title, sku: item.sku || '', sold: 0, revenue: 0, delivered: 0, cost: 0 };
-        stats[title].sold += (item.quantity || 0);
+        if (!orderStats[title]) orderStats[title] = { sku: item.sku || '', sold: 0, revenue: 0, delivered: 0, cost: 0 };
+        orderStats[title].sold += (item.quantity || 0);
         if (isDelivered) {
           const qty = item.quantity || 0;
-          // Cost effective on the order date (dated cost history when present).
           const p = pricing[title] || pricing[item.sku] || {};
           const cp = effectiveCostPrice(p._costHistory, orderDate, parseFloat(p.cost_price ?? 0));
           const ship = effectiveShippingCost(p._costHistory, orderDate, parseFloat(p.shipping_cost ?? storeCosts.shippingCost));
-          stats[title].revenue += qty * parseFloat(item.price || 0);
-          stats[title].delivered += qty;
-          stats[title].cost += qty * (cp + ship);
+          orderStats[title].revenue += qty * parseFloat(item.price || 0);
+          orderStats[title].delivered += qty;
+          orderStats[title].cost += qty * (cp + ship);
         }
       });
     });
 
-    return Object.values(stats).map(s => {
-      const p = pricing[s.title] || pricing[s.sku] || {};
-      // Display columns show the current/latest cost; `s.cost` is the date-accurate total.
+    // Phase 2: catalog products as base — show all, overlay order stats where available
+    const result = [];
+    const seen = new Set();
+
+    catalogProducts.forEach(p => {
+      seen.add(p.title);
+      const stats = orderStats[p.title] || { sold: 0, revenue: 0, delivered: 0, cost: 0 };
       const cp = parseFloat(p.cost_price ?? 0);
       const ship = parseFloat(p.shipping_cost ?? storeCosts.shippingCost);
-      const cost = s.cost;
-      const profit = s.revenue - cost;
-      const margin = s.revenue > 0 ? (profit / s.revenue * 100) : 0;
-      return { ...s, cp, ship, cost, profit, margin };
+      const profit = stats.revenue - stats.cost;
+      const margin = stats.revenue > 0 ? (profit / stats.revenue * 100) : 0;
+      result.push({ title: p.title, sku: p.sku || '', sold: stats.sold, revenue: stats.revenue, cost: stats.cost, cp, ship, profit, margin });
     });
-  }, [orders, pricing]);
+
+    // Also include sold products no longer in the catalog (e.g. deleted from Shopify)
+    Object.entries(orderStats).forEach(([title, stats]) => {
+      if (seen.has(title)) return;
+      const p = pricing[title] || pricing[stats.sku] || {};
+      const cp = parseFloat(p.cost_price ?? 0);
+      const ship = parseFloat(p.shipping_cost ?? storeCosts.shippingCost);
+      const profit = stats.revenue - stats.cost;
+      const margin = stats.revenue > 0 ? (profit / stats.revenue * 100) : 0;
+      result.push({ title, sku: stats.sku || '', sold: stats.sold, revenue: stats.revenue, cost: stats.cost, cp, ship, profit, margin });
+    });
+
+    return result;
+  }, [orders, pricing, catalogProducts, storeCosts]);
 
   const sorted = useMemo(() => {
     const list = [...products].filter(p =>
@@ -378,11 +397,11 @@ export default function ProductsView({ store, refreshTrigger }) {
               {!fetched ? (
                 <tr><td colSpan={7} style={{ padding:'60px', textAlign:'center', color:'rgba(255,255,255,0.25)', fontSize:'14px' }}>
                   <Package size={32} style={{ opacity:0.3, marginBottom:'12px', display:'block', margin:'0 auto 12px' }} />
-                  Select a date range and click "Analyze Products"
+                  Loading products…
                 </td></tr>
               ) : sorted.length === 0 ? (
                 <tr><td colSpan={7} style={{ padding:'60px', textAlign:'center', color:'rgba(255,255,255,0.25)', fontSize:'14px' }}>
-                  {showHidden ? 'No hidden products' : 'No products found for this range'}
+                  {showHidden ? 'No hidden products' : 'No products found — run a sync to load your catalog'}
                 </td></tr>
               ) : sorted.map((p, i) => {
                 const isProfit = p.profit >= 0;
