@@ -4,7 +4,7 @@ import BrandLogo from './BrandLogo';
 import {
   LayoutDashboard, Link2, Settings, Headphones,
   LogOut, ChevronRight, Unplug, ShieldCheck, Sparkles, SlidersHorizontal, Package, DollarSign,
-  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet
+  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone
 } from 'lucide-react';
 
 // Lazy load dashboard sub-views for performance
@@ -20,6 +20,7 @@ const BusinessAnalytics = lazy(() => import('./BusinessAnalytics'));
 const SheetView = lazy(() => import('./SheetView'));
 const CopilotChat = lazy(() => import('./CopilotChat'));
 const MoneyInMyPocket = lazy(() => import('./MoneyInMyPocket'));
+const AdsIntegration = lazy(() => import('./AdsIntegration'));
 
 const ViewLoading = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '400px', color: 'rgba(255,255,255,0.2)', fontSize: '14px' }}>
@@ -254,6 +255,7 @@ function SetupCard({ store, onNavigate }) {
     { done: true, label: 'Store connected', sub: 'Shopify sync is live' },
     { done: !!store?.products_synced_at, label: 'Product costs entered', sub: 'Required for accurate P&L', action: () => onNavigate('products') },
     { done: !!store?.shiprocket_connected, label: 'Shiprocket connected', sub: 'For real-time RTO tracking', action: () => onNavigate('connect') },
+    { done: !!store?.dashboard_features?.ads_configured, label: 'Meta & Google Ads connected', sub: 'Track ad spend in your profit', action: () => onNavigate('ads') },
   ];
   const doneCount = steps.filter(s => s.done).length;
   const pct = Math.round((doneCount / steps.length) * 100);
@@ -368,28 +370,6 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
   const [syncPreset, setSyncPreset] = useState('incremental');
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [metaSpend, setMetaSpend] = useState('');
-  const [googleSpend, setGoogleSpend] = useState('');
-  const [savingAdSpend, setSavingAdSpend] = useState(false);
-  const [adSpendSaved, setAdSpendSaved] = useState(false);
-
-  useEffect(() => {
-    if (store?.dashboard_features) {
-      const df = store.dashboard_features;
-      setMetaSpend(df.meta_ads_monthly != null ? String(df.meta_ads_monthly) : '');
-      setGoogleSpend(df.google_ads_monthly != null ? String(df.google_ads_monthly) : '');
-    }
-  }, [store]);
-
-  async function saveAdSpend() {
-    if (!store?.id) return;
-    setSavingAdSpend(true);
-    const df = { ...(store?.dashboard_features || {}), meta_ads_monthly: parseFloat(metaSpend) || 0, google_ads_monthly: parseFloat(googleSpend) || 0 };
-    await supabase.from('stores').update({ dashboard_features: df }).eq('id', store.id);
-    setSavingAdSpend(false);
-    setAdSpendSaved(true);
-    setTimeout(() => setAdSpendSaved(false), 3000);
-  }
   const [editDomain, setEditDomain] = useState(store?.shopify_domain || '');
   const [editClientId, setEditClientId] = useState('');
   const [editToken, setEditToken] = useState('');
@@ -704,76 +684,6 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
         </div>
       </div>
 
-      {/* ── Ad Accounts ── */}
-      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24, padding: '28px 32px', marginTop: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9', fontFamily: 'Outfit, sans-serif', marginBottom: 4 }}>Ad Accounts</div>
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.4)' }}>Enter your monthly ad spend to include it in P&L. Direct API sync coming soon.</div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {adSpendSaved && <span style={{ fontSize: 12, color: '#34d399' }}>✅ Saved</span>}
-            <button
-              onClick={saveAdSpend}
-              disabled={savingAdSpend}
-              style={{ padding: '8px 18px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#6366f1,#4f46e5)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: savingAdSpend ? 'wait' : 'pointer', opacity: savingAdSpend ? 0.7 : 1, fontFamily: 'inherit' }}
-            >
-              {savingAdSpend ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
-          {/* Meta Ads */}
-          <div style={{ padding: '20px', background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>📘</div>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9' }}>Meta Ads</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Facebook & Instagram</div>
-              </div>
-              <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.25)', color: '#fbbf24' }}>MANUAL</span>
-            </div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Monthly Spend (₹)</label>
-            <input
-              type="number"
-              value={metaSpend}
-              onChange={e => setMetaSpend(e.target.value)}
-              placeholder="e.g. 50000"
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: 14, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
-            />
-            <button style={{ marginTop: 10, width: '100%', padding: '8px', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)', background: 'rgba(59,130,246,0.06)', color: 'rgba(147,197,253,0.5)', fontSize: 12, cursor: 'default', fontFamily: 'inherit' }}>
-              🔗 Direct API Connect — Coming Soon
-            </button>
-          </div>
-
-          {/* Google Ads */}
-          <div style={{ padding: '20px', background: 'rgba(234,67,53,0.04)', border: '1px solid rgba(234,67,53,0.15)', borderRadius: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(234,67,53,0.12)', border: '1px solid rgba(234,67,53,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🔴</div>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9' }}>Google Ads</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Search & Shopping</div>
-              </div>
-              <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.25)', color: '#fbbf24' }}>MANUAL</span>
-            </div>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Monthly Spend (₹)</label>
-            <input
-              type="number"
-              value={googleSpend}
-              onChange={e => setGoogleSpend(e.target.value)}
-              placeholder="e.g. 30000"
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: 14, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
-            />
-            <button style={{ marginTop: 10, width: '100%', padding: '8px', borderRadius: 8, border: '1px solid rgba(234,67,53,0.2)', background: 'rgba(234,67,53,0.06)', color: 'rgba(252,165,165,0.5)', fontSize: 12, cursor: 'default', fontFamily: 'inherit' }}>
-              🔗 Direct API Connect — Coming Soon
-            </button>
-          </div>
-        </div>
-        <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 10, fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>
-          💡 Saved ad spend is included as a monthly cost in your P&L dashboard, split evenly across each day.
-        </div>
-      </div>
-
       {/* ── Upgrade CTA (shown when not Pro) ── */}
       {!isPro && (
         <div style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(34,211,238,0.05))', border: '1px solid rgba(99,102,241,0.18)', borderRadius: 20, padding: '24px 28px', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
@@ -873,7 +783,7 @@ function ConnectedStorePanel({ store, trialDuration, storeCreatedAt, isTrialExpi
    MAIN PERSONAL PANEL
 ───────────────────────────────────────────── */
 export default function PersonalPanel({ session, store, onStoreConnected }) {
-  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','sheet','products','pricing','connect','advanced','settings','support']);
+  const validTabs = new Set(['dashboard','weekly','monthly','all-time','analytics','sheet','products','pricing','connect','ads','advanced','settings','support']);
   const hashTab = window.location.hash.replace('#', '');
   const [activeTab, setActiveTab] = useState(validTabs.has(hashTab) ? hashTab : 'dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -1118,6 +1028,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             <NavItem icon={Package} label="Products" active={activeTab === 'products'} onClick={() => { setActiveTab('products'); setMobileSidebarOpen(false); }} tabKey="products" />
             <NavItem icon={DollarSign} label="Pricing" active={activeTab === 'pricing'} onClick={() => { setActiveTab('pricing'); setMobileSidebarOpen(false); }} tabKey="pricing" />
             <NavItem icon={Link2} label="Connect your Store" active={activeTab === 'connect'} onClick={() => { setActiveTab('connect'); setMobileSidebarOpen(false); }} badge={isConnected ? null : 'Setup'} tabKey="connect" />
+            <NavItem icon={Megaphone} label="Ad Accounts" active={activeTab === 'ads'} onClick={() => { setActiveTab('ads'); setMobileSidebarOpen(false); }} tabKey="ads" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
             <div style={{ fontSize: '9.5px', fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '1.2px', textTransform: 'uppercase', padding: '4px 10px 6px' }}>
@@ -1265,8 +1176,11 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   {activeTab === 'money'    && isConnected && store?.subscription_plan !== 'starter' && <MoneyInMyPocket store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'products' && isConnected && store?.subscription_plan !== 'starter' && <ProductsView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'advanced' && isConnected && store?.subscription_plan !== 'starter' && <AdvancedSettings store={store} />}
+                  {activeTab === 'ads' && isConnected && (
+                    <AdsIntegration store={store} onConfigured={() => { if (onStoreConnected) onStoreConnected(); setRefreshTrigger(prev => prev + 1); }} />
+                  )}
 
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'advanced'].includes(activeTab) && !isConnected && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'advanced', 'ads'].includes(activeTab) && !isConnected && (
                     <NoStoreState onConnectClick={() => setActiveTab('connect')} />
                   )}
                   {activeTab === 'connect' && (
