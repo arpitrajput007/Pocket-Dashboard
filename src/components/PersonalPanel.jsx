@@ -4,7 +4,7 @@ import BrandLogo from './BrandLogo';
 import {
   LayoutDashboard, Link2, Settings, Headphones,
   LogOut, ChevronRight, Unplug, ShieldCheck, Sparkles, SlidersHorizontal, Package, DollarSign,
-  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb
+  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb, Boxes
 } from 'lucide-react';
 
 // Lazy load dashboard sub-views for performance
@@ -21,6 +21,7 @@ const SheetView = lazy(() => import('./SheetView'));
 const CopilotChat = lazy(() => import('./CopilotChat'));
 const MoneyInMyPocket = lazy(() => import('./MoneyInMyPocket'));
 const AdsIntegration = lazy(() => import('./AdsIntegration'));
+const InventoryView  = lazy(() => import('./InventoryView'));
 
 const ViewLoading = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '400px', color: 'rgba(255,255,255,0.2)', fontSize: '14px' }}>
@@ -855,6 +856,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     analytics: 'Business Analytics',
     money: 'Money In My Pocket',
     sheet: 'Sheet View',
+    inventory: 'Inventory Management',
     connect: 'Connect your Store',
     products: 'Products',
     pricing: 'Pricing Management',
@@ -1030,6 +1032,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
               Management
             </div>
             <NavItem icon={Package} label="Products" active={activeTab === 'products'} onClick={() => { setActiveTab('products'); setMobileSidebarOpen(false); }} tabKey="products" />
+            <NavItem icon={Boxes} label="Inventory" active={activeTab === 'inventory'} onClick={() => { setActiveTab('inventory'); setMobileSidebarOpen(false); }} tabKey="inventory" />
             <NavItem icon={DollarSign} label="Pricing" active={activeTab === 'pricing'} onClick={() => { setActiveTab('pricing'); setMobileSidebarOpen(false); }} tabKey="pricing" />
             <NavItem icon={Link2} label="Connect your Store" active={activeTab === 'connect'} onClick={() => { setActiveTab('connect'); setMobileSidebarOpen(false); }} badge={isConnected ? null : 'Setup'} tabKey="connect" />
             <NavItem icon={Megaphone} label="Ad Accounts" active={activeTab === 'ads'} onClick={() => { setActiveTab('ads'); setMobileSidebarOpen(false); }} tabKey="ads" />
@@ -1170,7 +1173,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   )}
                   {activeTab === 'sheet' && isConnected && <SheetView store={store} refreshTrigger={refreshTrigger} />}
                   
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'products', 'advanced', 'copilot-upgrade'].includes(activeTab) && isConnected && store?.subscription_plan === 'starter' && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'products', 'inventory', 'advanced', 'copilot-upgrade'].includes(activeTab) && isConnected && store?.subscription_plan === 'starter' && (
                     <ProRequiredState onUpgradeClick={() => setActiveTab('pricing')} />
                   )}
 
@@ -1179,13 +1182,14 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   {activeTab === 'all-time' && isConnected && store?.subscription_plan !== 'starter' && <AllTimeView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'analytics' && isConnected && store?.subscription_plan !== 'starter' && <BusinessAnalytics store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'money'    && isConnected && store?.subscription_plan !== 'starter' && <MoneyInMyPocket store={store} refreshTrigger={refreshTrigger} />}
-                  {activeTab === 'products' && isConnected && store?.subscription_plan !== 'starter' && <ProductsView store={store} refreshTrigger={refreshTrigger} />}
-                  {activeTab === 'advanced' && isConnected && store?.subscription_plan !== 'starter' && <AdvancedSettings store={store} />}
+                  {activeTab === 'products'  && isConnected && store?.subscription_plan !== 'starter' && <ProductsView store={store} refreshTrigger={refreshTrigger} />}
+                  {activeTab === 'inventory' && isConnected && store?.subscription_plan !== 'starter' && <InventoryView store={store} />}
+                  {activeTab === 'advanced'  && isConnected && store?.subscription_plan !== 'starter' && <AdvancedSettings store={store} />}
                   {activeTab === 'ads' && isConnected && (
                     <AdsIntegration store={store} onConfigured={() => { if (onStoreConnected) onStoreConnected(); setRefreshTrigger(prev => prev + 1); }} />
                   )}
 
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'advanced', 'ads'].includes(activeTab) && !isConnected && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'inventory', 'advanced', 'ads'].includes(activeTab) && !isConnected && (
                     <NoStoreState onConnectClick={() => setActiveTab('connect')} />
                   )}
                   {activeTab === 'connect' && (

@@ -2091,6 +2091,276 @@ cron.schedule('30 4 * * 0', () => {
   detectAndNudgeChurned().catch(e => console.error('[ChurnDetect] Unhandled:', e.message));
 });
 
+// ============================================================================
+// INVENTORY MANAGEMENT
+// Accepts vendor bills (text / PDF base64 / URL), parses with GPT-4o,
+// stores line items, and cross-references Shopify orders for sold quantities.
+// ============================================================================
+
+let pdfParse;
+try { pdfParse = require('pdf-parse'); } catch (_) {
+  console.warn('[Inventory] pdf-parse not installed — PDF uploads will fail. Run: cd server && npm install');
+}
+
+/**
+ * POST /api/inventory/parse
+ * Body: { storeId, sourceType:'text'|'pdf'|'doc'|'url', text?, fileBase64?, url? }
+ */
+app.post('/api/inventory/parse', async (req, res) => {
+  const { storeId, sourceType, text, fileBase64, url } = req.body || {};
+  if (!storeId || !sourceType) return res.status(400).json({ error: 'storeId and sourceType required' });
+  if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: 'OpenAI API key not configured' });
+
+  try {
+    let billText = '';
+
+    if (sourceType === 'text') {
+      if (!text) return res.status(400).json({ error: 'text is required for text source type' });
+      billText = text;
+    } else if (sourceType === 'pdf') {
+      if (!fileBase64) return res.status(400).json({ error: 'fileBase64 is required for PDF uploads' });
+      if (!pdfParse) return res.status(500).json({ error: 'pdf-parse not installed on server. Contact support.' });
+      const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+      const buffer = Buffer.from(base64Data, 'base64');
+      const pdfData = await pdfParse(buffer);
+      billText = pdfData.text || '';
+    } else if (sourceType === 'url') {
+      if (!url) return res.status(400).json({ error: 'url is required for URL source type' });
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) return res.status(400).json({ error: `Failed to fetch URL: HTTP ${resp.status}` });
+      billText = await resp.text();
+      if (billText.length > 15000) billText = billText.slice(0, 15000) + '\n...[truncated]';
+    } else if (sourceType === 'doc') {
+      if (!fileBase64) return res.status(400).json({ error: 'fileBase64 is required for DOC uploads' });
+      const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+      billText = Buffer.from(base64Data, 'base64').toString('utf-8').replace(/\0/g, ' ').slice(0, 15000);
+    } else {
+      return res.status(400).json({ error: 'Invalid sourceType' });
+    }
+
+    if (!billText || billText.trim().length < 10) {
+      return res.status(400).json({ error: 'Could not extract text from the document. Try pasting the text manually.' });
+    }
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const systemPrompt = `You are an inventory bill parser for e-commerce stores. Extract structured data from vendor/supplier invoices and stock purchase documents.
+
+Return STRICT JSON only (no markdown, no code fences):
+{
+  "vendor": "<supplier name or null>",
+  "bill_date": "<YYYY-MM-DD or null>",
+  "bill_number": "<invoice number or null>",
+  "total_amount": <total bill value as number, no symbols>,
+  "currency": "<INR|USD|EUR|GBP — default INR if ₹ or Rs seen>",
+  "items": [
+    {
+      "name": "<product/item name>",
+      "sku": "<SKU/item code or null>",
+      "quantity": <integer quantity purchased>,
+      "unit_cost": <cost per unit as number>,
+      "total_cost": <quantity × unit_cost as number>
+    }
+  ]
+}
+
+Rules:
+- Extract ALL line items. Do NOT omit any product.
+- If unit_cost is missing, derive it: total_cost / quantity.
+- If total_cost is missing, derive it: unit_cost × quantity.
+- Strip currency symbols (₹, $, €) from numbers.
+- Output JSON only.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Parse this vendor bill:\n\n${billText.slice(0, 12000)}` },
+      ],
+      temperature: 0,
+      max_tokens: 2000,
+      response_format: { type: 'json_object' },
+    });
+
+    const parsed = JSON.parse(completion.choices[0].message.content);
+
+    if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+      return res.status(422).json({ error: 'No line items found. Make sure the document contains a list of products with quantities and prices.' });
+    }
+
+    // Persist bill
+    const { data: bill, error: billErr } = await supabase
+      .from('inventory_bills')
+      .insert({
+        store_id:     storeId,
+        bill_date:    parsed.bill_date   || null,
+        vendor:       (parsed.vendor     || 'Unknown Vendor').slice(0, 200),
+        bill_number:  (parsed.bill_number || null),
+        source_type:  sourceType,
+        source_url:   url || null,
+        raw_text:     billText.slice(0, 10000),
+        total_amount: Number(parsed.total_amount) || null,
+        currency:     (parsed.currency   || 'INR').toUpperCase().slice(0, 4),
+        status:       'parsed',
+      })
+      .select()
+      .single();
+
+    if (billErr) throw new Error('DB save failed: ' + billErr.message);
+
+    const lineItems = parsed.items
+      .filter(item => item.name && (item.quantity > 0 || item.total_cost > 0))
+      .map(item => ({
+        bill_id:      bill.id,
+        store_id:     storeId,
+        product_name: String(item.name).slice(0, 500),
+        sku:          item.sku ? String(item.sku).slice(0, 100) : null,
+        quantity:     Math.max(0, parseInt(item.quantity) || 0),
+        unit_cost:    Math.max(0, parseFloat(item.unit_cost) || 0),
+        total_cost:   Math.max(0, parseFloat(item.total_cost) || 0),
+      }));
+
+    const { error: itemsErr } = await supabase.from('bill_line_items').insert(lineItems);
+    if (itemsErr) console.warn('[Inventory] Line items insert warning:', itemsErr.message);
+
+    console.log(`[Inventory] Parsed bill storeId=${storeId} vendor="${parsed.vendor}" items=${lineItems.length}`);
+    res.json({ bill: { ...bill }, items: lineItems });
+
+  } catch (err) {
+    console.error('[Inventory/parse]', err.message);
+    res.status(500).json({ error: 'Parse failed: ' + err.message });
+  }
+});
+
+/** GET /api/inventory/bills/:storeId — all bills + their line items */
+app.get('/api/inventory/bills/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const { data: bills, error } = await supabase
+      .from('inventory_bills')
+      .select('*, bill_line_items(*)')
+      .eq('store_id', storeId)
+      .order('created_at', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ bills: bills || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** DELETE /api/inventory/bills/:billId?storeId=... */
+app.delete('/api/inventory/bills/:billId', async (req, res) => {
+  const { billId } = req.params;
+  const { storeId } = req.query;
+  if (!storeId) return res.status(400).json({ error: 'storeId required' });
+  try {
+    const { error } = await supabase
+      .from('inventory_bills')
+      .delete()
+      .eq('id', billId)
+      .eq('store_id', storeId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/inventory/summary/:storeId
+ * Aggregates all bill line items and cross-references Shopify orders
+ * to compute qty_sold and qty_remaining per product.
+ */
+app.get('/api/inventory/summary/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const [{ data: items, error: itemsErr }, { data: orders, error: ordersErr }] = await Promise.all([
+      supabase.from('bill_line_items').select('*').eq('store_id', storeId),
+      supabase.from('orders').select('line_items').eq('store_id', storeId).not('line_items', 'is', null),
+    ]);
+
+    if (itemsErr) return res.status(500).json({ error: itemsErr.message });
+    if (ordersErr) return res.status(500).json({ error: ordersErr.message });
+
+    if (!items || items.length === 0) {
+      return res.json({ summary: [], totals: { totalSpent: 0, totalQtyPurchased: 0, totalQtySold: 0, totalItems: 0 } });
+    }
+
+    // Build sold-qty maps from Shopify order line_items (JSONB array)
+    const titleSoldMap = new Map();  // lowercase title → qty sold
+    const skuSoldMap   = new Map();  // lowercase sku   → qty sold
+
+    for (const order of orders || []) {
+      const lis = Array.isArray(order.line_items) ? order.line_items : [];
+      for (const li of lis) {
+        const title = (li.title || '').toLowerCase().trim();
+        const sku   = (li.sku   || '').toLowerCase().trim();
+        const qty   = parseInt(li.quantity) || 0;
+        if (title) titleSoldMap.set(title, (titleSoldMap.get(title) || 0) + qty);
+        if (sku)   skuSoldMap.set(sku,     (skuSoldMap.get(sku)     || 0) + qty);
+      }
+    }
+
+    // Aggregate bill items by (sku || product_name)
+    const aggMap = new Map();
+    for (const item of items) {
+      const key = ((item.sku || item.product_name) + '').toLowerCase();
+      if (!aggMap.has(key)) {
+        aggMap.set(key, { product_name: item.product_name, sku: item.sku || null, qty_purchased: 0, total_spent: 0, unit_cost: item.unit_cost, bill_count: 0 });
+      }
+      const a = aggMap.get(key);
+      a.qty_purchased += item.quantity;
+      a.total_spent   += Number(item.total_cost) || 0;
+      a.unit_cost      = item.unit_cost;
+      a.bill_count    += 1;
+    }
+
+    // Compute sold quantities via fuzzy title match + exact SKU match
+    const summary = Array.from(aggMap.values()).map(item => {
+      const nameLower = item.product_name.toLowerCase().trim();
+      const skuLower  = (item.sku || '').toLowerCase().trim();
+
+      let qty_sold = 0;
+
+      // 1. Exact SKU match (highest confidence)
+      if (skuLower && skuSoldMap.has(skuLower)) {
+        qty_sold = skuSoldMap.get(skuLower);
+      } else {
+        // 2. Title substring match both directions
+        for (const [soldTitle, soldQty] of titleSoldMap) {
+          const shorter = soldTitle.length < nameLower.length ? soldTitle : nameLower;
+          const longer  = soldTitle.length < nameLower.length ? nameLower : soldTitle;
+          if (shorter.length >= 4 && longer.includes(shorter)) {
+            qty_sold += soldQty;
+          }
+        }
+      }
+
+      const avg_unit_cost  = item.qty_purchased > 0 ? item.total_spent / item.qty_purchased : item.unit_cost;
+      const qty_remaining  = Math.max(0, item.qty_purchased - qty_sold);
+      const pct_remaining  = item.qty_purchased > 0 ? (qty_remaining / item.qty_purchased) * 100 : 100;
+      const status         = qty_remaining === 0 ? 'out_of_stock'
+                           : pct_remaining <= 20  ? 'low_stock'
+                           : 'in_stock';
+
+      return { ...item, avg_unit_cost, qty_sold, qty_remaining, pct_remaining, status };
+    });
+
+    const totals = {
+      totalSpent:        summary.reduce((s, i) => s + i.total_spent, 0),
+      totalQtyPurchased: summary.reduce((s, i) => s + i.qty_purchased, 0),
+      totalQtySold:      summary.reduce((s, i) => s + i.qty_sold, 0),
+      totalItems:        summary.length,
+    };
+
+    res.json({ summary, totals });
+  } catch (err) {
+    console.error('[Inventory/summary]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Keep-alive: Render free tier spins down after 15 min of inactivity, killing the cron job.
 // Ping our own /api/health every 14 minutes so the process never sleeps.
 const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
