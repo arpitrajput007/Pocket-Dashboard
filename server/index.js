@@ -2102,6 +2102,11 @@ try { pdfParse = require('pdf-parse'); } catch (_) {
   console.warn('[Inventory] pdf-parse not installed — PDF uploads will fail. Run: cd server && npm install');
 }
 
+let xlsxLib;
+try { xlsxLib = require('xlsx'); } catch (_) {
+  console.warn('[Inventory] xlsx not installed — Excel/CSV uploads will fail. Run: cd server && npm install');
+}
+
 /**
  * POST /api/inventory/parse
  * Body: { storeId, sourceType:'text'|'pdf'|'doc'|'url', text?, fileBase64?, url? }
@@ -2130,6 +2135,14 @@ app.post('/api/inventory/parse', async (req, res) => {
       if (!resp.ok) return res.status(400).json({ error: `Failed to fetch URL: HTTP ${resp.status}` });
       billText = await resp.text();
       if (billText.length > 15000) billText = billText.slice(0, 15000) + '\n...[truncated]';
+    } else if (sourceType === 'excel' || sourceType === 'csv') {
+      if (!fileBase64) return res.status(400).json({ error: 'fileBase64 is required for Excel/CSV uploads' });
+      if (!xlsxLib) return res.status(500).json({ error: 'xlsx not installed on server. Contact support.' });
+      const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+      const buffer = Buffer.from(base64Data, 'base64');
+      const workbook = xlsxLib.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      billText = xlsxLib.utils.sheet_to_csv(workbook.Sheets[sheetName]);
     } else if (sourceType === 'doc') {
       if (!fileBase64) return res.status(400).json({ error: 'fileBase64 is required for DOC uploads' });
       const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
@@ -2339,24 +2352,111 @@ app.get('/api/inventory/summary/:storeId', async (req, res) => {
 
       const avg_unit_cost  = item.qty_purchased > 0 ? item.total_spent / item.qty_purchased : item.unit_cost;
       const qty_remaining  = Math.max(0, item.qty_purchased - qty_sold);
+      const value_remaining = avg_unit_cost * qty_remaining;
       const pct_remaining  = item.qty_purchased > 0 ? (qty_remaining / item.qty_purchased) * 100 : 100;
       const status         = qty_remaining === 0 ? 'out_of_stock'
                            : pct_remaining <= 20  ? 'low_stock'
                            : 'in_stock';
 
-      return { ...item, avg_unit_cost, qty_sold, qty_remaining, pct_remaining, status };
+      return { ...item, avg_unit_cost, qty_sold, qty_remaining, value_remaining, pct_remaining, status };
     });
 
     const totals = {
-      totalSpent:        summary.reduce((s, i) => s + i.total_spent, 0),
-      totalQtyPurchased: summary.reduce((s, i) => s + i.qty_purchased, 0),
-      totalQtySold:      summary.reduce((s, i) => s + i.qty_sold, 0),
-      totalItems:        summary.length,
+      totalSpent:         summary.reduce((s, i) => s + i.total_spent, 0),
+      totalQtyPurchased:  summary.reduce((s, i) => s + i.qty_purchased, 0),
+      totalQtySold:       summary.reduce((s, i) => s + i.qty_sold, 0),
+      totalValueRemaining:summary.reduce((s, i) => s + i.value_remaining, 0),
+      totalItems:         summary.length,
     };
 
     res.json({ summary, totals });
   } catch (err) {
     console.error('[Inventory/summary]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/inventory/insights/:storeId
+ * Generates 3-4 short AI insights about inventory health vs. sales.
+ */
+app.get('/api/inventory/insights/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: 'OpenAI API key not configured' });
+
+  try {
+    const [{ data: items }, { data: orders }] = await Promise.all([
+      supabase.from('bill_line_items').select('*').eq('store_id', storeId),
+      supabase.from('orders').select('line_items').eq('store_id', storeId).not('line_items', 'is', null),
+    ]);
+
+    if (!items || items.length === 0) {
+      return res.json({ insights: ['No inventory data yet. Upload a vendor bill to get started.'] });
+    }
+
+    // Rebuild sold maps (same logic as summary)
+    const titleSoldMap = new Map();
+    const skuSoldMap   = new Map();
+    for (const order of orders || []) {
+      for (const li of (Array.isArray(order.line_items) ? order.line_items : [])) {
+        const t = (li.title || '').toLowerCase().trim();
+        const s = (li.sku   || '').toLowerCase().trim();
+        const q = parseInt(li.quantity) || 0;
+        if (t) titleSoldMap.set(t, (titleSoldMap.get(t) || 0) + q);
+        if (s) skuSoldMap.set(s,   (skuSoldMap.get(s)   || 0) + q);
+      }
+    }
+
+    const aggMap = new Map();
+    for (const item of items) {
+      const key = ((item.sku || item.product_name) + '').toLowerCase();
+      if (!aggMap.has(key)) aggMap.set(key, { name: item.product_name, sku: item.sku, qty: 0, spent: 0 });
+      const a = aggMap.get(key);
+      a.qty += item.quantity; a.spent += Number(item.total_cost) || 0;
+    }
+
+    const productLines = Array.from(aggMap.values()).map(item => {
+      const nameLower = item.name.toLowerCase();
+      const skuLower  = (item.sku || '').toLowerCase();
+      let sold = 0;
+      if (skuLower && skuSoldMap.has(skuLower)) {
+        sold = skuSoldMap.get(skuLower);
+      } else {
+        for (const [t, q] of titleSoldMap) {
+          const shorter = t.length < nameLower.length ? t : nameLower;
+          const longer  = t.length < nameLower.length ? nameLower : t;
+          if (shorter.length >= 4 && longer.includes(shorter)) sold += q;
+        }
+      }
+      const pct = item.qty > 0 ? Math.round((sold / item.qty) * 100) : 0;
+      return `- ${item.name}: ${item.qty} purchased, ${sold} sold (${pct}%), ${item.qty - sold} remaining`;
+    }).join('\n');
+
+    const totalSpent = Array.from(aggMap.values()).reduce((s, i) => s + i.spent, 0);
+    const totalPurchased = Array.from(aggMap.values()).reduce((s, i) => s + i.qty, 0);
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'system',
+        content: `You are a concise inventory analyst for an Indian e-commerce store. Generate exactly 3-4 short, actionable insights about inventory health.
+Each insight = one sentence, max 20 words. Be specific — use product names and percentages.
+Focus on: fast-selling products, slow-moving stock, potential restock needs, overall health.
+Return STRICT JSON: { "insights": ["...", "...", "...", "..."] }`
+      }, {
+        role: 'user',
+        content: `Total spent: ₹${totalSpent.toLocaleString('en-IN')} | Total units: ${totalPurchased}\n\nProducts:\n${productLines}`
+      }],
+      temperature: 0.3,
+      max_tokens: 400,
+      response_format: { type: 'json_object' },
+    });
+
+    const parsed = JSON.parse(completion.choices[0].message.content);
+    res.json({ insights: Array.isArray(parsed.insights) ? parsed.insights.slice(0, 4) : [] });
+  } catch (err) {
+    console.error('[Inventory/insights]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
