@@ -2541,6 +2541,176 @@ Return STRICT JSON: { "insights": ["...", "...", "...", "..."] }`
   }
 });
 
+// ============================================================================
+// WAREHOUSE INVENTORY — live stock tracking + order validation
+// ============================================================================
+
+// GET /api/warehouse/:storeId — list all products
+app.get('/api/warehouse/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  try {
+    const { data, error } = await supabase
+      .from('warehouse_inventory')
+      .select('*')
+      .eq('store_id', storeId)
+      .order('product_name');
+    if (error) throw new Error(error.message);
+    res.json({ data: data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/warehouse/:storeId — add a product
+app.post('/api/warehouse/:storeId', async (req, res) => {
+  const { storeId } = req.params;
+  const { product_name, sku, current_stock, reorder_threshold, unit_cost, notes, sync_source } = req.body;
+  if (!product_name) return res.status(400).json({ error: 'product_name is required' });
+  try {
+    const { data, error } = await supabase.from('warehouse_inventory').insert([{
+      store_id: storeId, product_name, sku: sku || null,
+      current_stock: Number(current_stock) || 0,
+      reserved_stock: 0,
+      reorder_threshold: Number(reorder_threshold) || 10,
+      unit_cost: unit_cost ? Number(unit_cost) : null,
+      notes: notes || null,
+      sync_source: sync_source || 'manual',
+    }]).select().single();
+    if (error) throw new Error(error.message);
+    res.json({ data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /api/warehouse/:storeId/:id — update a product
+app.put('/api/warehouse/:storeId/:id', async (req, res) => {
+  const { storeId, id } = req.params;
+  const { product_name, sku, current_stock, reserved_stock, reorder_threshold, unit_cost, notes } = req.body;
+  const updates = {};
+  if (product_name    !== undefined) updates.product_name     = product_name;
+  if (sku             !== undefined) updates.sku              = sku;
+  if (current_stock   !== undefined) updates.current_stock   = Number(current_stock);
+  if (reserved_stock  !== undefined) updates.reserved_stock  = Number(reserved_stock);
+  if (reorder_threshold !== undefined) updates.reorder_threshold = Number(reorder_threshold);
+  if (unit_cost       !== undefined) updates.unit_cost       = unit_cost ? Number(unit_cost) : null;
+  if (notes           !== undefined) updates.notes           = notes;
+  try {
+    const { data, error } = await supabase.from('warehouse_inventory')
+      .update(updates).eq('id', id).eq('store_id', storeId).select().single();
+    if (error) throw new Error(error.message);
+    res.json({ data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/warehouse/:storeId/:id — delete a product
+app.delete('/api/warehouse/:storeId/:id', async (req, res) => {
+  const { storeId, id } = req.params;
+  try {
+    const { error } = await supabase.from('warehouse_inventory')
+      .delete().eq('id', id).eq('store_id', storeId);
+    if (error) throw new Error(error.message);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/warehouse/:storeId/import — bulk upsert from CSV rows
+// Body: { rows: [{ product_name, sku, current_stock, reorder_threshold, unit_cost }] }
+app.post('/api/warehouse/:storeId/import', async (req, res) => {
+  const { storeId } = req.params;
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || rows.length === 0)
+    return res.status(400).json({ error: 'rows array is required' });
+
+  const records = rows.map(r => ({
+    store_id: storeId,
+    product_name: r.product_name || r['Product Name'] || r['Name'] || '',
+    sku: r.sku || r['SKU'] || null,
+    current_stock: Number(r.current_stock || r['Stock'] || r['Quantity'] || r['Current Stock'] || 0),
+    reserved_stock: 0,
+    reorder_threshold: Number(r.reorder_threshold || r['Reorder Threshold'] || r['Min Stock'] || 10),
+    unit_cost: r.unit_cost || r['Unit Cost'] || r['Cost'] ? Number(r.unit_cost || r['Unit Cost'] || r['Cost']) : null,
+    sync_source: 'csv',
+  })).filter(r => r.product_name);
+
+  if (records.length === 0) return res.status(400).json({ error: 'No valid rows found' });
+
+  try {
+    // Upsert by SKU if present, else insert
+    const { data, error } = await supabase.from('warehouse_inventory')
+      .upsert(records, { onConflict: 'store_id,sku', ignoreDuplicates: false })
+      .select();
+    if (error) throw new Error(error.message);
+    res.json({ imported: records.length, data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/warehouse/:storeId/validate — compare recent orders vs warehouse stock
+app.get('/api/warehouse/:storeId/validate', async (req, res) => {
+  const { storeId } = req.params;
+  const days = Number(req.query.days) || 7;
+  try {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const [{ data: inventory }, { data: orders }] = await Promise.all([
+      supabase.from('warehouse_inventory').select('*').eq('store_id', storeId),
+      supabase.from('orders').select('id, name, created_at, line_items')
+        .eq('store_id', storeId).gte('created_at', since)
+        .is('cancelled_at', null).order('created_at', { ascending: false }),
+    ]);
+
+    if (!inventory) return res.json({ conflicts: [], summary: {} });
+
+    // Build SKU → inventory map (also try lowercase product_name)
+    const bySkuMap = {};
+    const byNameMap = {};
+    for (const item of inventory) {
+      if (item.sku) bySkuMap[item.sku.toLowerCase()] = item;
+      byNameMap[item.product_name.toLowerCase()] = item;
+    }
+
+    // Aggregate ordered quantities from orders
+    const orderedQty = {}; // productId → { qty, orders[] }
+    for (const order of (orders || [])) {
+      const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+      for (const li of lineItems) {
+        const sku = (li.sku || '').toLowerCase();
+        const name = (li.title || '').toLowerCase();
+        const inv = bySkuMap[sku] || byNameMap[name] ||
+          Object.values(byNameMap).find(i => name.includes(i.product_name.toLowerCase()) || i.product_name.toLowerCase().includes(name));
+        if (!inv) continue;
+        if (!orderedQty[inv.id]) orderedQty[inv.id] = { inv, qty: 0, orders: [] };
+        orderedQty[inv.id].qty += Number(li.quantity) || 0;
+        orderedQty[inv.id].orders.push({ order_id: order.id, order_name: order.name, qty: li.quantity, created_at: order.created_at });
+      }
+    }
+
+    // Find conflicts (ordered > available) and low stock
+    const conflicts = [];
+    const available = (inv) => Math.max(0, inv.current_stock - inv.reserved_stock);
+
+    for (const { inv, qty, orders: orderList } of Object.values(orderedQty)) {
+      const avail = available(inv);
+      if (qty > avail) {
+        conflicts.push({
+          product_name: inv.product_name, sku: inv.sku,
+          current_stock: inv.current_stock, reserved_stock: inv.reserved_stock,
+          available_stock: avail, ordered_qty: qty, shortfall: qty - avail,
+          orders: orderList.slice(0, 5),
+        });
+      }
+    }
+
+    // Low stock alerts (below threshold, not already in conflicts)
+    const lowStock = inventory.filter(inv =>
+      available(inv) <= inv.reorder_threshold && !orderedQty[inv.id]
+    ).map(inv => ({ product_name: inv.product_name, sku: inv.sku, available_stock: available(inv), reorder_threshold: inv.reorder_threshold }));
+
+    res.json({
+      conflicts,
+      low_stock: lowStock,
+      orders_checked: (orders || []).length,
+      period_days: days,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Keep-alive: Render free tier spins down after 15 min of inactivity, killing the cron job.
 // Ping our own /api/health every 14 minutes so the process never sleeps.
 const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
