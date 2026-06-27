@@ -1907,6 +1907,75 @@ cron.schedule('*/30 * * * *', () => {
   runShiprocketAutoSync().catch(err => console.error('[SRAutoSync] Unhandled:', err.message));
 });
 
+// ── Contact Form (landing page) ───────────────────────────────────────────────
+app.post('/api/contact', async (req, res) => {
+  const { full_name, brand_name, email, phone, order_volume, platform, topic, message } = req.body;
+  if (!full_name || !email) return res.status(400).json({ error: 'Name and email are required' });
+
+  // Save to Supabase (best-effort — table may not exist yet)
+  try {
+    await supabase.from('contact_requests').insert([{
+      full_name, brand_name, email, phone, order_volume, platform, topic, message,
+    }]);
+  } catch (e) {
+    console.warn('[Contact] Supabase save skipped:', e.message);
+  }
+
+  // Send notification email to dashboardpocket@gmail.com
+  const from = process.env.EMAIL_USER;
+  const transport = createMailTransport();
+  if (transport && from) {
+    try {
+      await transport.sendMail({
+        from: `"Pocket Dashboard" <${from}>`,
+        to: 'dashboardpocket@gmail.com',
+        subject: `📩 New Contact Request from ${full_name} — ${brand_name || 'Unknown Brand'}`,
+        html: `
+<div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:12px;overflow:hidden;border:1px solid #1e1e3a">
+  <div style="background:linear-gradient(135deg,#6366f1,#22d3ee);padding:18px 24px">
+    <h2 style="margin:0;color:#fff;font-size:18px">📩 New Contact Request</h2>
+  </div>
+  <div style="padding:24px">
+    <table style="width:100%;border-collapse:collapse;font-size:14px">
+      <tr><td style="padding:8px 0;color:#94a3b8;width:140px">Name</td><td style="padding:8px 0;color:#e2e8f0;font-weight:600">${full_name}</td></tr>
+      <tr><td style="padding:8px 0;color:#94a3b8">Brand</td><td style="padding:8px 0;color:#e2e8f0">${brand_name || '—'}</td></tr>
+      <tr><td style="padding:8px 0;color:#94a3b8">Email</td><td style="padding:8px 0"><a href="mailto:${email}" style="color:#22d3ee">${email}</a></td></tr>
+      <tr><td style="padding:8px 0;color:#94a3b8">Phone</td><td style="padding:8px 0;color:#e2e8f0">${phone || '—'}</td></tr>
+      <tr><td style="padding:8px 0;color:#94a3b8">Order Volume</td><td style="padding:8px 0;color:#e2e8f0">${order_volume || '—'}</td></tr>
+      <tr><td style="padding:8px 0;color:#94a3b8">Platform</td><td style="padding:8px 0;color:#e2e8f0">${platform || '—'}</td></tr>
+      <tr><td style="padding:8px 0;color:#94a3b8">Topic</td><td style="padding:8px 0;color:#e2e8f0">${topic || '—'}</td></tr>
+    </table>
+    ${message ? `<div style="margin-top:16px;padding:14px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);font-size:14px;line-height:1.6;color:#cbd5e1">${message}</div>` : ''}
+    <div style="margin-top:20px;font-size:12px;color:#475569">Submitted via Pocket Dashboard landing page</div>
+  </div>
+</div>`,
+      });
+      console.log(`[Contact] Email sent for ${email}`);
+    } catch (e) {
+      console.error('[Contact] Email failed:', e.message);
+    }
+  } else {
+    console.warn('[Contact] EMAIL_USER / EMAIL_PASSWORD not set — email skipped');
+  }
+
+  res.json({ success: true });
+});
+
+// ── Admin: list contact requests ──────────────────────────────────────────────
+app.get('/api/admin/contact-requests', verifyAdminToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('contact_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw new Error(error.message);
+    res.json({ data: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── User Feedback / NPS endpoint ─────────────────────────────────────────────
 app.post('/api/feedback', async (req, res) => {
   const { store_id, owner_email, nps_score, comment, type = 'nps' } = req.body;
