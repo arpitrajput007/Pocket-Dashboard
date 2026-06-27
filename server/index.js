@@ -1590,6 +1590,18 @@ function createMailTransport() {
   });
 }
 
+// Gmail transport — used for contact form notifications (CONTACT_EMAIL_USER / CONTACT_EMAIL_PASSWORD)
+// Falls back to main Namecheap transport if Gmail credentials aren't set.
+function createContactTransport() {
+  const user = process.env.CONTACT_EMAIL_USER;
+  const pass = process.env.CONTACT_EMAIL_PASSWORD;
+  if (user && pass) {
+    return { transport: nodemailer.createTransport({ service: 'gmail', auth: { user, pass } }), from: user };
+  }
+  const mainTransport = createMailTransport();
+  return mainTransport ? { transport: mainTransport, from: process.env.EMAIL_USER } : null;
+}
+
 async function sendAdminEmail({ subject, html }) {
   const from = process.env.EMAIL_USER;
   const to   = process.env.ADMIN_NOTIFY_EMAIL || from;
@@ -1922,12 +1934,11 @@ app.post('/api/contact', async (req, res) => {
   }
 
   // Send notification email to dashboardpocket@gmail.com
-  const from = process.env.EMAIL_USER;
-  const transport = createMailTransport();
-  if (transport && from) {
+  const ct = createContactTransport();
+  if (ct) {
     try {
-      await transport.sendMail({
-        from: `"Pocket Dashboard" <${from}>`,
+      await ct.transport.sendMail({
+        from: `"Pocket Dashboard" <${ct.from}>`,
         to: 'dashboardpocket@gmail.com',
         subject: `📩 New Contact Request from ${full_name} — ${brand_name || 'Unknown Brand'}`,
         html: `
@@ -1955,7 +1966,7 @@ app.post('/api/contact', async (req, res) => {
       console.error('[Contact] Email failed:', e.message);
     }
   } else {
-    console.warn('[Contact] EMAIL_USER / EMAIL_PASSWORD not set — email skipped');
+    console.warn('[Contact] No email transport configured — skipping notification');
   }
 
   res.json({ success: true });
