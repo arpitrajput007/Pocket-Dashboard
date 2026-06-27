@@ -1578,15 +1578,12 @@ app.get('/api/admin/stores', verifyAdminToken, async (req, res) => {
 
 // ── Email helper (Namecheap Private Email — mail.privateemail.com) ───────────
 function createMailTransport() {
-  const user = process.env.EMAIL_USER;  // e.g. business@pocketdashboard.app
-  const pass = process.env.EMAIL_PASSWORD;  // Namecheap email account password
+  const user = process.env.EMAIL_USER;
+  const pass = process.env.EMAIL_PASSWORD;
   if (!user || !pass) return null;
   return nodemailer.createTransport({
-    host: 'mail.privateemail.com',
-    port: 587,
-    secure: false,          // STARTTLS on port 587
+    service: 'gmail',
     auth: { user, pass },
-    tls: { rejectUnauthorized: false },
   });
 }
 
