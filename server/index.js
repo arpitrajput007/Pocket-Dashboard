@@ -1582,8 +1582,11 @@ function createMailTransport() {
   const pass = process.env.EMAIL_PASSWORD;
   if (!user || !pass) return null;
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'mail.privateemail.com',
+    port: 587,
+    secure: false,
     auth: { user, pass },
+    tls: { rejectUnauthorized: false },
   });
 }
 
