@@ -4,7 +4,7 @@ import BrandLogo from './BrandLogo';
 import {
   LayoutDashboard, Link2, Settings, Headphones,
   LogOut, ChevronRight, Unplug, ShieldCheck, Sparkles, SlidersHorizontal, Package, DollarSign,
-  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb, Boxes, Warehouse, Zap
+  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb, Boxes, Warehouse, Zap, Users
 } from 'lucide-react';
 
 // Lazy load dashboard sub-views for performance
@@ -24,6 +24,7 @@ const AdsIntegration = lazy(() => import('./AdsIntegration'));
 const InventoryView  = lazy(() => import('./InventoryView'));
 const WarehouseView  = lazy(() => import('./WarehouseView'));
 const ScaleView      = lazy(() => import('./ScaleView'));
+const CustomersView  = lazy(() => import('./CustomersView'));
 
 const ViewLoading = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '400px', color: 'rgba(255,255,255,0.2)', fontSize: '14px' }}>
@@ -857,6 +858,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     'all-time': 'All-Time Analytics',
     analytics: 'Business Analytics',
     money: 'Money In My Pocket',
+    customers: 'Customers',
     sheet: 'Sheet View',
     inventory: 'Inventory Management',
     warehouse: 'Warehouse Inventory',
@@ -868,6 +870,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     settings: 'Settings',
     support: 'Talk to Support',
     features: 'Feature Requests',
+    'copilot-upgrade': 'Upgrade to unlock AI Co-Pilot',
   };
 
   return (
@@ -1028,6 +1031,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             <NavItem icon={TrendingUp} label="All-Time Analytics" active={activeTab === 'all-time'} onClick={() => { setActiveTab('all-time'); setMobileSidebarOpen(false); }} tabKey="all-time" />
             <NavItem icon={PieChart} label="Business Analytics" active={activeTab === 'analytics'} onClick={() => { setActiveTab('analytics'); setMobileSidebarOpen(false); }} tabKey="analytics" />
             <NavItem icon={Wallet} label="Money In My Pocket" active={activeTab === 'money'} onClick={() => { setActiveTab('money'); setMobileSidebarOpen(false); }} tabKey="money" />
+            <NavItem icon={Users} label="Customers" active={activeTab === 'customers'} onClick={() => { setActiveTab('customers'); setMobileSidebarOpen(false); }} tabKey="customers" />
             <NavItem icon={List} label="Sheet View" active={activeTab === 'sheet'} onClick={() => { setActiveTab('sheet'); setMobileSidebarOpen(false); }} tabKey="sheet" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
@@ -1040,7 +1044,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             <NavItem icon={Warehouse} label="Warehouse" active={activeTab === 'warehouse'} onClick={() => { setActiveTab('warehouse'); setMobileSidebarOpen(false); }} tabKey="warehouse" />
             <NavItem icon={DollarSign} label="Pricing" active={activeTab === 'pricing'} onClick={() => { setActiveTab('pricing'); setMobileSidebarOpen(false); }} tabKey="pricing" />
             <NavItem icon={Link2} label="Connect your Store" active={activeTab === 'connect'} onClick={() => { setActiveTab('connect'); setMobileSidebarOpen(false); }} badge={isConnected ? null : 'Setup'} tabKey="connect" />
-            <NavItem icon={Megaphone} label="Ad Accounts" active={activeTab === 'ads'} onClick={() => { setActiveTab('ads'); setMobileSidebarOpen(false); }} tabKey="ads" />
+            <NavItem icon={Megaphone} label="Ad Spend" active={activeTab === 'ads'} onClick={() => { setActiveTab('ads'); setMobileSidebarOpen(false); }} tabKey="ads" />
             <NavItem icon={Zap} label="Scale Your Business" active={activeTab === 'scale'} onClick={() => { setActiveTab('scale'); setMobileSidebarOpen(false); }} tabKey="scale" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
@@ -1179,7 +1183,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   )}
                   {activeTab === 'sheet' && isConnected && <SheetView store={store} refreshTrigger={refreshTrigger} />}
                   
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'products', 'inventory', 'warehouse', 'advanced', 'copilot-upgrade'].includes(activeTab) && isConnected && store?.subscription_plan === 'starter' && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'customers', 'products', 'inventory', 'warehouse', 'advanced', 'copilot-upgrade'].includes(activeTab) && isConnected && store?.subscription_plan === 'starter' && (
                     <ProRequiredState onUpgradeClick={() => setActiveTab('pricing')} />
                   )}
 
@@ -1187,7 +1191,8 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   {activeTab === 'monthly' && isConnected && store?.subscription_plan !== 'starter' && <MonthlyView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'all-time' && isConnected && store?.subscription_plan !== 'starter' && <AllTimeView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'analytics' && isConnected && store?.subscription_plan !== 'starter' && <BusinessAnalytics store={store} refreshTrigger={refreshTrigger} />}
-                  {activeTab === 'money'    && isConnected && store?.subscription_plan !== 'starter' && <MoneyInMyPocket store={store} refreshTrigger={refreshTrigger} />}
+                  {activeTab === 'money'      && isConnected && store?.subscription_plan !== 'starter' && <MoneyInMyPocket store={store} refreshTrigger={refreshTrigger} />}
+                  {activeTab === 'customers' && isConnected && store?.subscription_plan !== 'starter' && <CustomersView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'products'  && isConnected && store?.subscription_plan !== 'starter' && <ProductsView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'inventory' && isConnected && store?.subscription_plan !== 'starter' && <InventoryView store={store} />}
                   {activeTab === 'warehouse' && isConnected && store?.subscription_plan !== 'starter' && <WarehouseView store={store} />}
@@ -1197,7 +1202,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                     <AdsIntegration store={store} onConfigured={() => { if (onStoreConnected) onStoreConnected(); setRefreshTrigger(prev => prev + 1); }} />
                   )}
 
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'inventory', 'warehouse', 'advanced', 'ads', 'scale'].includes(activeTab) && !isConnected && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'customers', 'sheet', 'products', 'inventory', 'warehouse', 'advanced', 'ads', 'scale'].includes(activeTab) && !isConnected && (
                     <NoStoreState onConnectClick={() => setActiveTab('connect')} />
                   )}
                   {activeTab === 'connect' && (

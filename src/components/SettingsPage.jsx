@@ -4,7 +4,7 @@ import {
   Check, RefreshCw, Plus, Trash2, Eye, EyeOff,
   Globe, Clock, Phone, FileText, MapPin, User, Mail,
   Zap, Lock, Monitor, LogOut, Download, Edit2, ChevronRight,
-  AlertCircle, Loader, Camera, Brain, Activity
+  AlertCircle, Loader, Camera, Brain, Activity, Bell
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
@@ -152,6 +152,7 @@ const SECTIONS = [
   { key: 'integrations',  icon: Plug,         label: 'Integrations' },
   { key: 'money',         icon: IndianRupee,  label: 'Money Settings' },
   { key: 'ai',            icon: Sparkles,     label: 'AI Co-Pilot' },
+  { key: 'notifications', icon: Bell,         label: 'Notifications' },
   { key: 'billing',       icon: CreditCard,   label: 'Billing' },
   { key: 'security',      icon: Shield,       label: 'Security' },
 ];
@@ -346,8 +347,8 @@ const INTEGRATIONS = [
   { key: 'shopify',  name: 'Shopify',     emoji: '🛍️', desc: 'Orders, products & inventory',  color: '#95bf47', glow: 'rgba(149,191,71,0.2)' },
   { key: 'meta',     name: 'Meta Ads',    emoji: '📘', desc: 'Facebook & Instagram ad spend',  color: '#1877f2', glow: 'rgba(24,119,242,0.2)' },
   { key: 'shiprocket', name: 'Shiprocket', emoji: '🚚', desc: 'Shipment tracking & RTO data', color: '#e63327', glow: 'rgba(230,51,39,0.2)' },
-  { key: 'razorpay', name: 'Razorpay',    emoji: '💳', desc: 'Payment collections & refunds',  color: '#3395ff', glow: 'rgba(51,149,255,0.2)' },
-  { key: 'cashfree', name: 'Cashfree',    emoji: '💰', desc: 'COD & prepaid payment flows',    color: '#00d09c', glow: 'rgba(0,208,156,0.2)' },
+  { key: 'razorpay', name: 'Razorpay',    emoji: '💳', desc: 'Payment collections & refunds',  color: '#3395ff', glow: 'rgba(51,149,255,0.2)', soon: true },
+  { key: 'cashfree', name: 'Cashfree',    emoji: '💰', desc: 'COD & prepaid payment flows',    color: '#00d09c', glow: 'rgba(0,208,156,0.2)', soon: true },
   { key: 'google',   name: 'Google Ads',  emoji: '🔍', desc: 'Search, Display & Shopping ads', color: '#fbbc05', glow: 'rgba(251,188,5,0.2)', soon: true },
 ];
 
@@ -481,7 +482,11 @@ function Integrations({ store, session, onNavigate }) {
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Recent Sync Log</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', color: 'rgba(255,255,255,0.3)', fontSize: 12.5 }}>
                     <Activity size={13} />
-                    <span>No sync logs available yet. Detailed logs are coming in a future update.</span>
+                    <span>
+                      {getLastSync(int.key) !== '—'
+                        ? `Sync history is recorded in your store activity. Last sync: ${getLastSync(int.key)}`
+                        : 'No sync activity recorded yet for this integration.'}
+                    </span>
                   </div>
                 </div>
               )}
@@ -682,7 +687,86 @@ function AISettings({ store }) {
   );
 }
 
-// ─── 5. Billing ──────────────────────────────────────────────────────────────
+// ─── 5. Notifications ────────────────────────────────────────────────────────
+
+const API_URL_DIGEST = import.meta.env.VITE_API_URL || '';
+
+function NotificationsSettings({ store }) {
+  const df = store?.dashboard_features || {};
+  const [enabled, setEnabled] = useState(!!df.daily_digest_enabled);
+  const [phone,   setPhone]   = useState(df.digest_phone || '');
+  const [email,   setEmail]   = useState(df.digest_email || '');
+  const [saving,  setSaving]  = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState('');
+
+  const handleSave = async () => {
+    if (!store?.id) return;
+    setSaving(true);
+    await supabase.from('stores').update({
+      dashboard_features: { ...df, daily_digest_enabled: enabled, digest_phone: phone, digest_email: email },
+    }).eq('id', store.id);
+    setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 3000);
+  };
+
+  const sendTest = async () => {
+    if (!store?.id) return;
+    setTesting(true); setTestMsg('');
+    try {
+      const res = await fetch(`${API_URL_DIGEST}/api/digest/daily?preview=1&storeId=${store.id}`, { method: 'POST' });
+      const data = await res.json();
+      setTestMsg(data.result?.sent ? `Sent via ${data.result.sent}!` : data.result?.reason || 'Sent (check inbox)');
+    } catch (e) {
+      setTestMsg('Failed to send test — check server logs');
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontFamily: 'Outfit,sans-serif', fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 5px', letterSpacing: '-0.3px' }}>Notifications</h2>
+        <p style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.38)', margin: 0 }}>Get your daily P&amp;L digest delivered every morning.</p>
+      </div>
+
+      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: '20px 24px', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 3 }}>Daily P&amp;L Digest</div>
+            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.35)' }}>Morning summary at 8:00 AM IST — orders, revenue, net profit, RTO</div>
+          </div>
+          <Toggle on={enabled} onChange={setEnabled} />
+        </div>
+
+        {enabled && (
+          <>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-main)', marginBottom: 4 }}>WhatsApp Number</label>
+              <p style={{ margin: '0 0 6px', fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Requires WhatsApp BSP (WATI / Interakt) configured in server env vars. Falls back to email.</p>
+              <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210"
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: '#e2e8f0', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-main)', marginBottom: 4 }}>Email Fallback</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@yourbrand.com"
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: '#e2e8f0', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            </div>
+            <button onClick={sendTest} disabled={testing}
+              style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.1)', color: '#818cf8', fontSize: 13, fontWeight: 600, cursor: testing ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: testing ? 0.6 : 1 }}>
+              {testing ? 'Sending…' : 'Send Test Digest Now'}
+            </button>
+            {testMsg && <div style={{ marginTop: 10, fontSize: 12.5, color: testMsg.includes('Failed') ? '#f87171' : '#10b981' }}>{testMsg}</div>}
+          </>
+        )}
+      </div>
+
+      <SaveBtn saving={saving} saved={saved} onClick={handleSave} />
+    </div>
+  );
+}
+
+// ─── 6. Billing ──────────────────────────────────────────────────────────────
 
 const PLANS = [
   { key: 'free',  name: 'Starter',    price: '₹0',   period: 'Free Trial', color: '#fbbf24', features: ['1 Shopify store', 'Basic analytics', 'Email digest', '50 AI queries/mo'] },
@@ -897,8 +981,9 @@ export default function SettingsPage({ session, store, onSaved, onNavigate }) {
         {section === 'profile'      && <BusinessProfile store={store} session={session} onSaved={onSaved} />}
         {section === 'integrations' && <Integrations store={store} session={session} onNavigate={onNavigate} />}
         {section === 'money'        && <MoneySettings store={store} />}
-        {section === 'ai'           && <AISettings store={store} />}
-        {section === 'billing'      && <BillingSection store={store} />}
+        {section === 'ai'            && <AISettings store={store} />}
+        {section === 'notifications' && <NotificationsSettings store={store} />}
+        {section === 'billing'       && <BillingSection store={store} />}
         {section === 'security'     && <SecuritySection session={session} />}
       </div>
     </div>

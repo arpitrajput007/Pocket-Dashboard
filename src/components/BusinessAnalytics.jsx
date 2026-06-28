@@ -241,6 +241,7 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
   const [prevAdRows, setPrevAd] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [manualCAC, setManualCAC] = useState('');
 
   useEffect(() => { if (store?.id) fetchAll(); }, [store?.id, period, refreshTrigger]);
 
@@ -250,7 +251,7 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
     const curr = getPeriodDates(period);
     const prev = getPrevDates(period);
     const [r1, r2, r3, r4, r5] = await Promise.all([
-      supabase.from('orders').select('total_price,tags,created_at,shipping_address').eq('store_id', store.id).gte('created_at', curr.start).lte('created_at', curr.end),
+      supabase.from('orders').select('total_price,tags,created_at,shipping_address,line_items').eq('store_id', store.id).gte('created_at', curr.start).lte('created_at', curr.end),
       supabase.from('orders').select('total_price,tags').eq('store_id', store.id).gte('created_at', prev.start).lte('created_at', prev.end),
       supabase.from('ad_costs').select('amount,date').eq('store_id', store.id).gte('date', curr.start.split('T')[0]).lte('date', curr.end.split('T')[0]),
       supabase.from('ad_costs').select('amount,date').eq('store_id', store.id).gte('date', prev.start.split('T')[0]).lte('date', prev.end.split('T')[0]),
@@ -293,6 +294,70 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
       .map(([state, d]) => ({ state, total: d.total, rto: d.rto, rate: d.total ? (d.rto / d.total) * 100 : 0 }))
       .sort((a, b) => b.rto - a.rto).slice(0, 8);
   }, [currOrders]);
+
+  /* RTO by Product */
+  const rtoByProduct = useMemo(() => {
+    const cfg = store?.dashboard_features?.cost_config || {};
+    const rtoCostPer = parseFloat(cfg.rto_cost_per_order || 135);
+    const shipPer    = parseFloat(cfg.shipping_cost || 60);
+    const map = {};
+    currOrders.forEach(o => {
+      const rto = isRTO(o);
+      const items = Array.isArray(o.line_items) ? o.line_items
+        : typeof o.line_items === 'string' ? (() => { try { return JSON.parse(o.line_items); } catch { return []; } })()
+        : [];
+      items.forEach(li => {
+        const name = (li.title || li.name || 'Unknown').trim();
+        if (!map[name]) map[name] = { orders: 0, rto: 0 };
+        map[name].orders++;
+        if (rto) map[name].rto++;
+      });
+    });
+    return Object.entries(map)
+      .filter(([, d]) => d.orders >= 5)
+      .map(([name, d]) => ({
+        name,
+        orders: d.orders,
+        rtos: d.rto,
+        rate: d.orders > 0 ? (d.rto / d.orders) * 100 : 0,
+        cost: d.rto * (rtoCostPer + shipPer),
+      }))
+      .sort((a, b) => b.rate - a.rate)
+      .slice(0, 10);
+  }, [currOrders, store]);
+
+  /* CM2 Calculation */
+  const cm2 = useMemo(() => {
+    if (m.orders === 0) return null;
+    const df  = store?.dashboard_features || {};
+    const cfg = df.cost_config || {};
+    const aov = m.aov;
+
+    // COGS: use weighted average from products table if available
+    const totalProductCost = products.reduce((s, p) => s + parseFloat(p.cost_price || 0), 0);
+    const totalProductPrice = products.filter(p => parseFloat(p.cost_price || 0) > 0).reduce((s, p) => s + parseFloat(p.price || 0), 0);
+    const hasProductCosts   = totalProductCost > 0 && totalProductPrice > 0;
+    const cogsRateActual    = hasProductCosts ? totalProductCost / totalProductPrice : ((df.biz_cogs_pct ?? 43) / 100);
+    const cogsPerOrder      = aov * cogsRateActual;
+
+    const packaging      = parseFloat(cfg.packaging_cost || 40);
+    const shipPer        = parseFloat(cfg.shipping_cost || df.biz_shipping_per || 60);
+    const rtoCostPer     = parseFloat(cfg.rto_cost_per_order || df.biz_rto_cost || 135);
+    const gatewayPct     = parseFloat(cfg.gateway_pct || 2) / 100;
+    const rtoAllocation  = m.orders > 0 ? (m.rtoCount * rtoCostPer) / Math.max(m.orders - m.rtoCount, 1) : 0;
+    const prepaidFraction = m.orders > 0 ? (m.orders - m.codCount) / m.orders : 0;
+    const paymentFees    = aov * prepaidFraction * gatewayPct;
+
+    const adSpend = adRows.reduce((s, a) => s + parseFloat(a.amount || 0), 0);
+    const newCustomers = m.orders > 0 ? Math.round(m.orders * 0.6) : 0;
+    const estimatedCAC  = (adSpend > 0 && newCustomers > 0) ? adSpend / newCustomers : 0;
+    const cac = manualCAC ? parseFloat(manualCAC) : estimatedCAC;
+
+    const cm2Val  = aov - cogsPerOrder - packaging - shipPer - paymentFees - rtoAllocation - cac;
+    const cm2Pct  = aov > 0 ? (cm2Val / aov) * 100 : 0;
+
+    return { aov, cogsPerOrder, packaging, shipping: shipPer, paymentFees, rtoAllocation, cac, cm2Val, cm2Pct, hasProductCosts, cogsRateActual, estimatedCAC, newCustomers, adSpend };
+  }, [m, products, store, adRows, manualCAC]);
 
   /* Forecast */
   const forecast = useMemo(() => {
@@ -572,6 +637,51 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
           </div>
         </div>
 
+        {/* ── RTO by Product ── */}
+        {rtoByProduct.length > 0 && (
+          <div className="card glass" style={{ marginBottom: 20 }}>
+            <h3>RTO by Product — {PERIOD_LABELS[period]}</h3>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    {['Product', 'Orders', 'RTOs', 'RTO Rate', 'Cost', 'Status'].map(h => (
+                      <th key={h} style={{ textAlign: h === 'Product' ? 'left' : 'right', padding: '8px 10px', fontSize: 11, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.7px', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rtoByProduct.map((p, i) => {
+                    const badge = p.rate > 20
+                      ? { label: 'High', color: 'var(--loss-color)' }
+                      : p.rate > 10
+                      ? { label: 'Moderate', color: '#f59e0b' }
+                      : { label: 'Good', color: 'var(--profit-color)' };
+                    return (
+                      <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td style={{ padding: '10px 10px', fontSize: 13, color: 'var(--text-main)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</td>
+                        <td style={{ textAlign: 'right', padding: '10px 10px', fontSize: 13, color: 'var(--text-muted)' }}>{p.orders}</td>
+                        <td style={{ textAlign: 'right', padding: '10px 10px', fontSize: 13, color: p.rtos > 0 ? 'var(--loss-color)' : 'var(--text-muted)' }}>{p.rtos}</td>
+                        <td style={{ textAlign: 'right', padding: '10px 10px', fontSize: 13, fontWeight: 700, color: badge.color }}>{pctAbs(p.rate)}</td>
+                        <td style={{ textAlign: 'right', padding: '10px 10px', fontSize: 13, color: 'var(--text-muted)' }}>{p.cost > 0 ? fmt(p.cost) : '—'}</td>
+                        <td style={{ textAlign: 'right', padding: '10px 10px' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: badge.color, background: `${badge.color}18`, border: `1px solid ${badge.color}30`, borderRadius: 999, padding: '2px 9px' }}>{badge.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {rtoByProduct.length > 0 && rtoByProduct[0].cost > 0 && (
+              <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(249,115,22,0.07)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 10, fontSize: 12.5, color: 'var(--text-muted)' }}>
+                Total RTO cost this period: <strong style={{ color: 'var(--loss-color)' }}>{fmt(rtoByProduct.reduce((s, p) => s + p.cost, 0))}</strong>
+                {' · '}Eliminating <strong>{rtoByProduct[0].name}</strong> RTOs alone would save <strong style={{ color: 'var(--profit-color)' }}>{fmt(rtoByProduct[0].cost)}</strong>/period
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Row 4: Forecast + COD split ── */}
         <div className="main-grid" style={{ marginBottom: 20 }}>
 
@@ -660,6 +770,83 @@ export default function BusinessAnalytics({ store, refreshTrigger }) {
             ))}
           </div>
         </div>
+
+        {/* ── CM2 Calculator ── */}
+        {cm2 && (
+          <div className="card glass" style={{ marginBottom: 20 }}>
+            <h3>CM2 — Contribution Margin 2 <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-dim)' }}>Unit economics after paid acquisition cost</span></h3>
+
+            {/* CAC input */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '14px 16px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: 12, marginBottom: 20 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 4 }}>Customer Acquisition Cost (CAC)</div>
+                {cm2.adSpend > 0 ? (
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 8 }}>
+                    Your ad spend this period: <strong style={{ color: 'white' }}>{fmtK(cm2.adSpend)}</strong> ÷ ~{cm2.newCustomers} new customers = estimated <strong style={{ color: '#a78bfa' }}>{fmtK(cm2.estimatedCAC)}/customer</strong>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 8 }}>No ad spend logged. Enter CAC manually below.</div>
+                )}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  {cm2.adSpend > 0 && !manualCAC && (
+                    <button onClick={() => setManualCAC('')}
+                      style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(167,139,250,0.4)', background: 'rgba(167,139,250,0.1)', color: '#a78bfa', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      Use estimate ({fmtK(cm2.estimatedCAC)})
+                    </button>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Enter manually: ₹</span>
+                    <input type="number" value={manualCAC} onChange={e => setManualCAC(e.target.value)} placeholder={Math.round(cm2.estimatedCAC) || '0'}
+                      style={{ width: 100, padding: '6px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white', fontSize: 13, fontFamily: 'inherit' }} />
+                  </div>
+                  {manualCAC && <button onClick={() => setManualCAC('')} style={{ fontSize: 11, color: 'var(--text-dim)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Reset</button>}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+              {/* Result */}
+              <div style={{ padding: '20px', background: cm2.cm2Val > 0 ? 'rgba(16,185,129,0.06)' : 'rgba(244,63,94,0.06)', border: `1px solid ${cm2.cm2Val > 0 ? 'rgba(16,185,129,0.2)' : 'rgba(244,63,94,0.2)'}`, borderRadius: 14, textAlign: 'center' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 8 }}>CM2 Per Order</div>
+                <div style={{ fontSize: 36, fontWeight: 900, color: cm2.cm2Val > 0 ? 'var(--profit-color)' : 'var(--loss-color)', letterSpacing: '-0.03em' }}>
+                  {cm2.cm2Val >= 0 ? '+' : '−'}{fmt(Math.abs(cm2.cm2Val))}
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: cm2.cm2Val > 0 ? 'var(--profit-color)' : 'var(--loss-color)', marginTop: 4 }}>{pctAbs(cm2.cm2Pct)} of AOV</div>
+                <div style={{ marginTop: 16, padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.04)', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  {cm2.cm2Pct > 15 ? 'Excellent — strong unit economics, scale confidently'
+                   : cm2.cm2Pct > 10 ? 'Healthy — safe to scale with monitoring'
+                   : cm2.cm2Pct > 5  ? 'Tight — optimise before scaling further'
+                   : cm2.cm2Pct > 0  ? 'Warning — scaling ads at this CM2 will lose money'
+                   : 'Critical — you lose money on every paid customer acquired'}
+                </div>
+              </div>
+
+              {/* Breakdown */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 12 }}>Breakdown</div>
+                {[
+                  { label: 'AOV',               val: cm2.aov,          sign: '+', color: 'var(--profit-color)' },
+                  { label: `COGS (${pctAbs(cm2.cogsRateActual * 100)})${cm2.hasProductCosts ? '' : ' est.'}`, val: cm2.cogsPerOrder, sign: '−', color: 'var(--loss-color)' },
+                  { label: 'Packaging',           val: cm2.packaging,   sign: '−', color: 'var(--text-muted)' },
+                  { label: 'Shipping',            val: cm2.shipping,    sign: '−', color: 'var(--text-muted)' },
+                  { label: 'Payment Fees',        val: cm2.paymentFees, sign: '−', color: 'var(--text-muted)' },
+                  { label: 'RTO Allocation',      val: cm2.rtoAllocation, sign: '−', color: 'var(--text-muted)' },
+                  { label: 'CAC',                 val: cm2.cac,         sign: '−', color: 'var(--loss-color)' },
+                ].map(row => (
+                  <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: 12.5 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>{row.label}</span>
+                    <span style={{ fontWeight: 600, color: row.color }}>{row.sign}{fmtK(row.val)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 4px', fontSize: 13, fontWeight: 700 }}>
+                  <span style={{ color: 'var(--text-main)' }}>CM2</span>
+                  <span style={{ color: cm2.cm2Val >= 0 ? 'var(--profit-color)' : 'var(--loss-color)' }}>{cm2.cm2Val >= 0 ? '+' : '−'}{fmtK(Math.abs(cm2.cm2Val))} ({pctAbs(cm2.cm2Pct)})</span>
+                </div>
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>Healthy range: 10–15% of AOV</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         </>
       )}

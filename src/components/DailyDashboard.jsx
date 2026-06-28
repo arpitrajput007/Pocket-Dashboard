@@ -448,6 +448,33 @@ export default function DailyDashboard({ store, refreshTrigger }) {
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', marginBottom: 6, fontWeight: 600 }}>Loss Days ({scoreboardData.lossDays})</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--loss-color)' }}>-{fmt(Math.abs(scoreboardData.lossAmt))}</div>
               </div>
+              {(() => {
+                const RTO_DATE_GATE = '2026-02-25';
+                const cfg = store?.dashboard_features?.cost_config || {};
+                const rtoCostPer = parseFloat(cfg.rto_cost_per_order || 135);
+                const shipPer    = parseFloat(cfg.shipping_cost || 60);
+                const rtoOrders = orders.filter(o => {
+                  const d = (o.created_at || '').slice(0, 10);
+                  if (d < RTO_DATE_GATE) return false;
+                  const tags = (o.tags || '').toLowerCase();
+                  return tags.includes('rto') || tags.includes('returned') || tags.includes('undelivered') || tags.includes('ndr');
+                });
+                const rtoCount = rtoOrders.length;
+                if (rtoCount === 0) return null;
+                const codRTOs = rtoOrders.filter(o => {
+                  const tags = (o.tags || '').toLowerCase();
+                  return tags.includes('cod') || tags.includes('cash on delivery');
+                });
+                const rtoLoss = rtoCount * (rtoCostPer + shipPer);
+                const lostCODRevenue = codRTOs.reduce((s, o) => s + parseFloat(o.total_price || 0), 0);
+                return (
+                  <div style={{ background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)', padding: '10px 16px', borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', marginBottom: 6, fontWeight: 600 }}>RTO Loss ({rtoCount} returns)</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: '#f97316' }}>-{fmt(rtoLoss + lostCODRevenue)}</div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Logistics + {codRTOs.length} lost COD payments</div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <div>

@@ -137,10 +137,10 @@ export default function AdsIntegration({ store, onConfigured }) {
           <span style={{ fontSize: 10.5, fontWeight: 700, color: '#f472b6', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Ad Spend Integration</span>
         </div>
         <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: 26, fontWeight: 800, color: '#f1f5f9', margin: '0 0 6px', letterSpacing: '-0.4px' }}>
-          Connect Your Ad Accounts
+          Ad Spend Tracker
         </h2>
         <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', margin: 0, lineHeight: 1.7, maxWidth: 720 }}>
-          Ad spend is usually the biggest cost for a D2C brand. Add it here and your <strong style={{ color: 'rgba(255,255,255,0.7)' }}>net profit becomes real</strong> — every dashboard, P&L and product margin will subtract what you actually spend on ads.
+          Enter your monthly spend by platform. Direct API sync from Meta and Google is coming soon.
         </p>
       </div>
 

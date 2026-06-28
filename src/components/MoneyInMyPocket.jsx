@@ -8,6 +8,7 @@ import {
   calcPL, extractPackSize, loadCostHistory, getShipment, fmt,
 } from '../utils/dashboardUtils';
 import { dashboardCache } from '../utils/dashboardCache';
+import CodSimulator from './CodSimulator';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -524,6 +525,9 @@ export default function MoneyInMyPocket({ store, refreshTrigger }) {
           )}
         </div>
       </div>
+
+      {/* ── COD Impact Simulator ──────────────────────────────────────────────── */}
+      <CodSimulator pl={pl} costConfig={costConfig} />
 
       {/* ── Manual expenses + AI insights (2-column) ──────────────────────────── */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginBottom:20 }}>

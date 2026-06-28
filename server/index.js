@@ -991,6 +991,7 @@ app.post('/api/copilot', async (req, res) => {
     // Per-order and aggregate stats
     let totalRevenue = 0, totalOrders = orders.length;
     let rtoCount = 0, deliveredCount = 0, codCount = 0, canceledCount = 0;
+    let actualCOGS = 0, cogsMatchedRevenue = 0;
     const productMap = {}; // title -> { orders, rto, revenue, qty }
 
     orders.forEach(o => {
@@ -1011,29 +1012,54 @@ app.post('/api/copilot', async (req, res) => {
       const items = Array.isArray(o.line_items) ? o.line_items : [];
       items.forEach(item => {
         const title = (item.title || item.name || 'Unknown').trim();
+        const qty   = item.quantity || 1;
+        const price = parseFloat(item.price || 0);
         if (!productMap[title]) productMap[title] = { orders: 0, rto: 0, revenue: 0, qty: 0 };
         productMap[title].orders++;
-        productMap[title].qty    += (item.quantity || 1);
-        productMap[title].revenue += parseFloat(item.price || 0) * (item.quantity || 1);
+        productMap[title].qty     += qty;
+        productMap[title].revenue += price * qty;
         if (isRTO) productMap[title].rto++;
+
+        // Accumulate actual COGS from products table cost_price
+        const key = title.toLowerCase().trim();
+        if (costMap[key] && costMap[key].cost > 0) {
+          actualCOGS           += costMap[key].cost * qty;
+          cogsMatchedRevenue   += price * qty;
+        }
       });
     });
 
-    const adSpend    = adCosts.reduce((s, a) => s + parseFloat(a.amount || 0), 0);
-    const rtoRate    = totalOrders > 0 ? ((rtoCount / totalOrders) * 100).toFixed(1) : 0;
-    const delRate    = totalOrders > 0 ? ((deliveredCount / totalOrders) * 100).toFixed(1) : 0;
-    const codRate    = totalOrders > 0 ? ((codCount / totalOrders) * 100).toFixed(1) : 0;
-    const df         = store.dashboard_features || {};
-    const cogsRate   = (df.biz_cogs_pct ?? 43) / 100;
-    const shipPer    = df.biz_shipping_per ?? 150;
-    const rtoCostPer = df.biz_rto_cost ?? 600;
-    const cogs       = totalRevenue * cogsRate;
-    const shipping   = totalOrders * shipPer;
-    const rtoLoss    = rtoCount * rtoCostPer;
-    const payFees    = totalRevenue * ((totalOrders - codCount) / Math.max(totalOrders, 1)) * 0.018;
-    const netProfit  = totalRevenue - cogs - adSpend - shipping - rtoLoss - payFees;
-    const mer        = adSpend > 0 ? (totalRevenue / adSpend).toFixed(2) : 'N/A';
-    const aov        = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
+    const adSpend        = adCosts.reduce((s, a) => s + parseFloat(a.amount || 0), 0);
+    const rtoRate        = totalOrders > 0 ? ((rtoCount / totalOrders) * 100).toFixed(1) : 0;
+    const delRate        = totalOrders > 0 ? ((deliveredCount / totalOrders) * 100).toFixed(1) : 0;
+    const codRate        = totalOrders > 0 ? ((codCount / totalOrders) * 100).toFixed(1) : 0;
+    const df             = store.dashboard_features || {};
+    const costConfig     = df.cost_config || {};
+
+    // Use actual product cost data if available, otherwise null (no fallback to 43%)
+    const hasCostData    = actualCOGS > 0 && cogsMatchedRevenue > 0;
+    const cogsRate       = hasCostData ? actualCOGS / cogsMatchedRevenue : null;
+    // Extrapolate COGS to full revenue if partial match, else null
+    const cogs           = hasCostData ? (cogsMatchedRevenue > 0 ? actualCOGS * (totalRevenue / cogsMatchedRevenue) : actualCOGS) : null;
+
+    // Real cost config values (with sensible defaults matching MoneyInMyPocket)
+    const shipPer        = parseFloat(costConfig.shipping_cost || df.biz_shipping_per || 60);
+    const rtoCostPer     = parseFloat(costConfig.rto_cost_per_order || df.biz_rto_cost || 135);
+    const codChargePer   = parseFloat(costConfig.cod_charge_per_order || 29);
+    const gatewayPct     = parseFloat(costConfig.gateway_pct || 2) / 100;
+
+    const shipping       = totalOrders * shipPer;
+    const rtoLoss        = rtoCount * rtoCostPer;
+    const codCharges     = codCount * codChargePer;
+    const prepaidCount   = totalOrders - codCount;
+    const prepaidRevEst  = totalRevenue * (prepaidCount / Math.max(totalOrders, 1));
+    const payFees        = prepaidRevEst * gatewayPct;
+
+    const netProfit      = hasCostData
+      ? totalRevenue - cogs - adSpend - shipping - rtoLoss - codCharges - payFees
+      : null;
+    const mer            = adSpend > 0 ? (totalRevenue / adSpend).toFixed(2) : 'N/A';
+    const aov            = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
 
     // Top products by orders (max 10)
     const topProducts = Object.entries(productMap)
@@ -1070,7 +1096,7 @@ BUSINESS OVERVIEW (Last 30 Days):
 - Total Orders: ${totalOrders}
 - Total Revenue: ${inr(totalRevenue)}
 - Ad Spend: ${inr(adSpend)}${adSpend === 0 ? ' (no ad costs logged yet)' : ''}
-- Net Profit (estimated): ${inr(netProfit)} (after COGS, shipping, RTO losses, payment fees, ad spend)
+- Net Profit: ${netProfit !== null ? inr(netProfit) + ' (after actual COGS, shipping, RTO losses, COD charges, payment fees, ad spend)' : 'UNAVAILABLE — product costs have not been entered for this store. Advise the user to enter costs in the Products section before profit estimates can be calculated.'}
 - RTO Orders: ${rtoCount} (${rtoRate}% RTO rate)
 - Delivered Orders: ${deliveredCount} (${delRate}% delivery rate)
 - COD Orders: ${codCount} (${codRate}% of total)
@@ -1080,12 +1106,13 @@ BUSINESS OVERVIEW (Last 30 Days):
 
 COST BREAKDOWN:
 - Revenue: ${inr(totalRevenue)}
-- COGS (~${Math.round(cogsRate * 100)}%): ${inr(cogs)}
-- Shipping: ${inr(shipping)}
+- COGS (actual from product costs${hasCostData ? ', ' + Math.round(cogsRate * 100) + '% of revenue' : ''}): ${hasCostData ? inr(cogs) : 'NOT ENTERED — user must add cost prices in Products section'}
+- Shipping: ${inr(shipping)} (${inr(shipPer)} × ${totalOrders} orders)
+- COD Charges: ${inr(codCharges)} (${inr(codChargePer)} × ${codCount} COD orders)
 - Ad Spend: ${inr(adSpend)}
 - RTO Losses: ${inr(rtoLoss)} (${rtoCount} returns × ${inr(rtoCostPer)} per return)
-- Payment Fees: ${inr(payFees)}
-- Net Profit: ${inr(netProfit)}
+- Payment Gateway Fees: ${inr(payFees)} (${(gatewayPct * 100).toFixed(1)}% on prepaid orders)
+- Net Profit: ${netProfit !== null ? inr(netProfit) : 'Cannot calculate — product costs missing'}
 
 TOP PRODUCTS BY ORDERS:
 ${topProducts.length > 0 ? topProducts.map(p => `- ${p.title}: ${p.orders} orders, ${p.rto} RTO (${p.rtoRate}% RTO rate), ${inr(p.revenue)} revenue`).join('\n') : '- No product-level data available (line_items may not be synced)'}
@@ -2816,6 +2843,126 @@ app.get('/api/warehouse/:storeId/validate', async (req, res) => {
       period_days: days,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Daily P&L Digest ─────────────────────────────────────────────────────────
+// POST /api/digest/daily — compute yesterday's stats and send per-store digest.
+// Called by an external cron (e.g. Render cron job) at 08:00 IST daily.
+// Also accepts ?preview=1&storeId=xxx for the Settings "Send test" button.
+app.post('/api/digest/daily', async (req, res) => {
+  const isPreview = req.query.preview === '1';
+  const previewStoreId = req.query.storeId || req.body?.storeId;
+
+  const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+  const nowIST  = new Date(Date.now() + IST_OFFSET);
+  const todayIST = new Date(nowIST); todayIST.setHours(0, 0, 0, 0);
+  const yesterdayStart = new Date(todayIST - 86400000).toISOString().replace('Z', '+00:00');
+  const yesterdayEnd   = new Date(todayIST - 1).toISOString().replace('Z', '+00:00');
+  const dateLabel = new Date(todayIST - 86400000).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+
+  const inr = n => '₹' + Math.round(n).toLocaleString('en-IN');
+
+  async function sendDigestForStore(store) {
+    const df  = store.dashboard_features || {};
+    const cfg = df.cost_config || {};
+    const toPhone = df.digest_phone || store.owner_phone || null;
+    const toEmail = df.digest_email || store.owner_email || null;
+
+    const [ordersRes, adCostsRes] = await Promise.all([
+      supabase.from('orders').select('total_price, tags').eq('store_id', store.id).gte('created_at', yesterdayStart).lte('created_at', yesterdayEnd),
+      supabase.from('ad_costs').select('amount').eq('store_id', store.id).eq('date', new Date(todayIST - 86400000).toISOString().slice(0, 10)),
+    ]);
+
+    const orders = ordersRes.data || [];
+    if (orders.length === 0 && !isPreview) return;
+
+    const totalRevenue = orders.reduce((s, o) => s + parseFloat(o.total_price || 0), 0);
+    const totalOrders  = orders.length;
+    const rtoOrders    = orders.filter(o => { const t = (o.tags || '').toLowerCase(); return t.includes('rto') || t.includes('returned') || t.includes('undelivered'); });
+    const codOrders    = orders.filter(o => (o.tags || '').toLowerCase().includes('cod'));
+    const adSpend      = (adCostsRes.data || []).reduce((s, a) => s + parseFloat(a.amount || 0), 0);
+    const rtoCost      = rtoOrders.length * (parseFloat(cfg.rto_cost_per_order || 135) + parseFloat(cfg.shipping_cost || 60));
+
+    const cogsRate     = ((df.biz_cogs_pct ?? 43) / 100);
+    const shipping     = totalOrders * parseFloat(cfg.shipping_cost || 60);
+    const payFees      = totalRevenue * ((totalOrders - codOrders.length) / Math.max(totalOrders, 1)) * (parseFloat(cfg.gateway_pct || 2) / 100);
+    const netProfit    = totalRevenue - (totalRevenue * cogsRate) - adSpend - shipping - rtoCost - payFees;
+    const margin       = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0';
+    const codPct       = totalOrders > 0 ? Math.round(codOrders.length / totalOrders * 100) : 0;
+
+    const msgText = `📊 *Pocket Dashboard — Yesterday's Summary*\n${store.store_name || 'Your Store'} | ${dateLabel}\n\nOrders: ${totalOrders}\nRevenue: ${inr(totalRevenue)}\nNet Profit: ${inr(netProfit)} (${margin}% margin)\n\nRTO: ${rtoOrders.length} orders${rtoOrders.length > 0 ? ` (${inr(rtoCost)} loss)` : ''}\nCOD: ${codPct}% | Prepaid: ${100 - codPct}%\n\n_View full dashboard → pocketdashboard.app_`;
+
+    const htmlBody = `<div style="font-family:Inter,sans-serif;max-width:480px;margin:0 auto;background:#07071a;color:#e2e8f0;padding:28px;border-radius:16px">
+      <h2 style="margin:0 0 4px;font-size:18px;color:#f1f5f9">📊 Daily P&L Summary</h2>
+      <p style="margin:0 0 20px;font-size:12px;color:#64748b">${store.store_name || 'Your Store'} · ${dateLabel}</p>
+      <table style="width:100%;border-collapse:collapse">
+        <tr><td style="padding:8px 0;border-bottom:1px solid #1e293b;color:#94a3b8">Orders</td><td style="text-align:right;font-weight:700">${totalOrders}</td></tr>
+        <tr><td style="padding:8px 0;border-bottom:1px solid #1e293b;color:#94a3b8">Revenue</td><td style="text-align:right;font-weight:700">${inr(totalRevenue)}</td></tr>
+        <tr><td style="padding:8px 0;border-bottom:1px solid #1e293b;color:#94a3b8">Net Profit</td><td style="text-align:right;font-weight:700;color:${netProfit >= 0 ? '#10b981' : '#f87171'}">${inr(netProfit)} (${margin}%)</td></tr>
+        <tr><td style="padding:8px 0;border-bottom:1px solid #1e293b;color:#94a3b8">RTO</td><td style="text-align:right;color:#f97316">${rtoOrders.length} orders${rtoOrders.length > 0 ? ` · ${inr(rtoCost)} loss` : ''}</td></tr>
+        <tr><td style="padding:8px 0;color:#94a3b8">COD / Prepaid</td><td style="text-align:right">${codPct}% / ${100 - codPct}%</td></tr>
+      </table>
+      <div style="margin-top:20px;padding:12px 16px;background:rgba(99,102,241,0.1);border-radius:10px;font-size:12px;color:#818cf8">View full dashboard → <a href="https://pocketdashboard.app" style="color:#a78bfa">pocketdashboard.app</a></div>
+    </div>`;
+
+    // WhatsApp via WATI or Interakt BSP (if configured)
+    const whatsappApiUrl  = process.env.WATI_API_URL || process.env.INTERAKT_API_URL;
+    const whatsappApiKey  = process.env.WATI_API_KEY  || process.env.INTERAKT_API_KEY;
+    if (whatsappApiUrl && whatsappApiKey && toPhone) {
+      try {
+        const phone = toPhone.replace(/\D/g, '').replace(/^91/, '');
+        await fetch(`${whatsappApiUrl}/sendTemplateMessage?whatsappNumber=91${phone}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${whatsappApiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_name: 'daily_pnl_digest', broadcast_name: 'digest', parameters: [{ name: 'body', value: msgText }] }),
+        });
+        console.log(`[Digest] WhatsApp sent → ${phone}`);
+        return { sent: 'whatsapp', phone };
+      } catch (e) {
+        console.error('[Digest] WhatsApp failed:', e.message);
+      }
+    }
+
+    // Fallback to email
+    if (toEmail) {
+      await sendOwnerEmail(toEmail, {
+        subject: `Pocket Dashboard — ${dateLabel} Summary for ${store.store_name || 'Your Store'}`,
+        html: htmlBody,
+      });
+      console.log(`[Digest] Email sent → ${toEmail}`);
+      return { sent: 'email', email: toEmail };
+    }
+
+    return { sent: null, reason: 'No delivery channel configured (no digest_phone or digest_email in store settings)' };
+  }
+
+  try {
+    if (isPreview && previewStoreId) {
+      const { data: store } = await supabase.from('stores').select('*').eq('id', previewStoreId).single();
+      if (!store) return res.status(404).json({ error: 'Store not found' });
+      const result = await sendDigestForStore(store);
+      return res.json({ success: true, preview: true, result });
+    }
+
+    // Production: send to all stores with digest enabled
+    const { data: stores } = await supabase.from('stores')
+      .select('*')
+      .eq("dashboard_features->>'daily_digest_enabled'", 'true');
+
+    const results = [];
+    for (const store of (stores || [])) {
+      try {
+        const r = await sendDigestForStore(store);
+        results.push({ storeId: store.id, ...r });
+      } catch (e) {
+        results.push({ storeId: store.id, error: e.message });
+      }
+    }
+    res.json({ success: true, count: results.length, results });
+  } catch (e) {
+    console.error('[Digest] Fatal:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Keep-alive: Render free tier spins down after 15 min of inactivity, killing the cron job.
