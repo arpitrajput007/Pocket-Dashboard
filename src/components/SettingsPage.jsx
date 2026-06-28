@@ -292,8 +292,8 @@ function BusinessProfile({ store, session, onSaved }) {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>Brand Logo</div>
           <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.35)', marginBottom: 10 }}>PNG or SVG recommended · Shown on your dashboard header</div>
-          <button style={{ padding: '7px 16px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-            Upload Logo
+          <button disabled style={{ padding: '7px 16px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.3)', fontSize: 12.5, fontWeight: 600, cursor: 'not-allowed', fontFamily: 'inherit' }}>
+            Upload Logo — Coming Soon
           </button>
         </div>
       </div>
@@ -351,7 +351,7 @@ const INTEGRATIONS = [
   { key: 'google',   name: 'Google Ads',  emoji: '🔍', desc: 'Search, Display & Shopping ads', color: '#fbbc05', glow: 'rgba(251,188,5,0.2)', soon: true },
 ];
 
-function Integrations({ store, session }) {
+function Integrations({ store, session, onNavigate }) {
   const df = store?.dashboard_features || {};
   const [srStatus, setSrStatus] = useState(null);
   const [logs, setLogs] = useState({});
@@ -376,6 +376,13 @@ function Integrations({ store, session }) {
     if (key === 'shiprocket' && srStatus?.lastSyncedAt)
       return new Date(srStatus.lastSyncedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     return '—';
+  };
+
+  const getManageTab = (key) => {
+    if (key === 'shopify') return 'connect';
+    if (key === 'shiprocket') return 'advanced';
+    if (key === 'meta') return 'ads';
+    return null;
   };
 
   const getHealth = (key) => {
@@ -443,15 +450,18 @@ function Integrations({ store, session }) {
                             style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
                             <Activity size={12} /> Logs
                           </button>
-                          <button style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.08)', color: '#818cf8', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <button onClick={() => onNavigate && onNavigate(getManageTab(int.key))}
+                            style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.08)', color: '#818cf8', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5 }}>
                             <RefreshCw size={11} /> Reconnect
                           </button>
-                          <button style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(248,113,133,0.25)', background: 'rgba(248,113,133,0.06)', color: '#f87171', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                          <button onClick={() => onNavigate && onNavigate(getManageTab(int.key))}
+                            style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(248,113,133,0.25)', background: 'rgba(248,113,133,0.06)', color: '#f87171', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
                             Disconnect
                           </button>
                         </>
                       ) : (
-                        <button style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid rgba(99,102,241,0.35)', background: 'linear-gradient(135deg,rgba(99,102,241,0.15),rgba(79,70,229,0.1))', color: '#818cf8', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        <button onClick={() => onNavigate && onNavigate(getManageTab(int.key))}
+                          style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid rgba(99,102,241,0.35)', background: 'linear-gradient(135deg,rgba(99,102,241,0.15),rgba(79,70,229,0.1))', color: '#818cf8', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                           Connect →
                         </button>
                       )}
@@ -469,17 +479,10 @@ function Integrations({ store, session }) {
               {expanded && (
                 <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '16px 24px', background: 'rgba(0,0,0,0.15)' }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Recent Sync Log</div>
-                  {[
-                    { time: store?.last_synced_at || new Date().toISOString(), msg: 'Sync completed successfully', ok: true },
-                    { time: new Date(Date.now() - 86400000).toISOString(), msg: 'Incremental sync — 0 new orders', ok: true },
-                    { time: new Date(Date.now() - 172800000).toISOString(), msg: 'Full historical sync initiated', ok: true },
-                  ].map((e, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 0', borderBottom: i < 2 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: e.ok ? '#10b981' : '#f87171', flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', flex: 1 }}>{e.msg}</span>
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>{new Date(e.time).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  ))}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0', color: 'rgba(255,255,255,0.3)', fontSize: 12.5 }}>
+                    <Activity size={13} />
+                    <span>No sync logs available yet. Detailed logs are coming in a future update.</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -637,9 +640,6 @@ function AISettings({ store }) {
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 3000);
   };
 
-  const queriesUsed = 0;
-  const queriesTotal = 50;
-
   return (
     <div>
       <div style={{ marginBottom: 28 }}>
@@ -647,27 +647,18 @@ function AISettings({ store }) {
         <p style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.38)', margin: 0 }}>Configure your AI assistant. It learns from your store data to surface what matters.</p>
       </div>
 
-      {/* Usage meter */}
+      {/* Beta usage banner */}
       <div style={{ background: 'linear-gradient(135deg,rgba(99,102,241,0.08),rgba(139,92,246,0.05))', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 16, padding: '20px 24px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 200 }}>
           <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Brain size={20} color="#818cf8" />
           </div>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(99,102,241,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>AI Usage This Month</div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>{queriesUsed} queries used · {queriesTotal - queriesUsed} remaining</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(99,102,241,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>AI Usage</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>Unlimited during beta · Usage limits apply after launch</div>
           </div>
         </div>
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <div style={{ height: 6, background: 'rgba(255,255,255,0.07)', borderRadius: 99, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${(queriesUsed / queriesTotal) * 100}%`, background: 'linear-gradient(90deg,#6366f1,#8b5cf6)', borderRadius: 99 }} />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>{queriesUsed} used</span>
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>{queriesTotal} total</span>
-          </div>
-        </div>
-        <Pill color="#fbbf24" bg="rgba(251,191,36,0.1)" border="rgba(251,191,36,0.2)">FREE BETA</Pill>
+        <Pill color="#fbbf24" bg="rgba(251,191,36,0.1)" border="rgba(251,191,36,0.2)">FREE BETA — UNLIMITED</Pill>
       </div>
 
       {/* Toggles */}
@@ -893,7 +884,7 @@ function SecuritySection({ session }) {
 
 // ─── Main SettingsPage ───────────────────────────────────────────────────────
 
-export default function SettingsPage({ session, store, onSaved }) {
+export default function SettingsPage({ session, store, onSaved, onNavigate }) {
   const [section, setSection] = useState('profile');
 
   return (
@@ -904,7 +895,7 @@ export default function SettingsPage({ session, store, onSaved }) {
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         {section === 'profile'      && <BusinessProfile store={store} session={session} onSaved={onSaved} />}
-        {section === 'integrations' && <Integrations store={store} session={session} />}
+        {section === 'integrations' && <Integrations store={store} session={session} onNavigate={onNavigate} />}
         {section === 'money'        && <MoneySettings store={store} />}
         {section === 'ai'           && <AISettings store={store} />}
         {section === 'billing'      && <BillingSection store={store} />}

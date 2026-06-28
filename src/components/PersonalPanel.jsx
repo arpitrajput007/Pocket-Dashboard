@@ -1223,7 +1223,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   )}
                   {activeTab === 'pricing' && <PricingView store={store} />}
                   {activeTab === 'settings' && (
-                    <SettingsPage session={session} store={store} />
+                    <SettingsPage session={session} store={store} onNavigate={(tab) => { setActiveTab(tab); }} />
                   )}
                   {activeTab === 'features' && (
                     <FeatureRequests session={session} store={store} />

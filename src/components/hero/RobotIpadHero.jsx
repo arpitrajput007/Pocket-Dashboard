@@ -103,7 +103,6 @@ export default function RobotIpadHero() {
             <div className="ticker-track flex gap-10 whitespace-nowrap text-[11px] font-mono tracking-[0.28em] text-white/45">
               {[
                 "SHOPIFY",
-                "WOOCOMMERCE",
                 "SHIPROCKET",
                 "DELHIVERY",
                 "ECOMEXPRESS",
@@ -115,7 +114,6 @@ export default function RobotIpadHero() {
               ]
                 .concat([
                   "SHOPIFY",
-                  "WOOCOMMERCE",
                   "SHIPROCKET",
                   "DELHIVERY",
                   "ECOMEXPRESS",

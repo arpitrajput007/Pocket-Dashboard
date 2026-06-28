@@ -55,7 +55,7 @@ export function Hero() {
           <span className="opacity-40">·</span>
           <span>Setup in under 10 minutes</span>
           <span className="opacity-40">·</span>
-          <span>Works with Shopify, WooCommerce &amp; COD businesses</span>
+          <span>Works with Shopify & COD businesses</span>
         </div>
       </div>
 

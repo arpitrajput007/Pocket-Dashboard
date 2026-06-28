@@ -163,7 +163,7 @@ export function Pricing() {
           <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8 text-sm text-muted-foreground">
             <span className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-accent" />
-              Works with Shopify, WooCommerce, COD businesses
+              Works with Shopify & COD businesses · WooCommerce coming soon
             </span>
             <span className="hidden sm:inline-block opacity-30">·</span>
             <span className="flex items-center gap-2">
