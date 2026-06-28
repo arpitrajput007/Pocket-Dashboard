@@ -1,6 +1,14 @@
 const logos = [
-  "SHOPIFY", "SHIPROCKET", "ECOMEXPRESS", "DELHIVERY",
-  "META ADS", "GOOGLE ADS", "CASHFREE", "RAZORPAY", "AMAZON",
+  { name: "SHOPIFY" },
+  { name: "WOOCOMMERCE", soon: true },
+  { name: "SHIPROCKET" },
+  { name: "ECOMEXPRESS" },
+  { name: "DELHIVERY" },
+  { name: "META ADS" },
+  { name: "GOOGLE ADS" },
+  { name: "CASHFREE" },
+  { name: "RAZORPAY" },
+  { name: "AMAZON" },
 ];
 
 export function LogoMarquee() {
@@ -18,12 +26,17 @@ export function LogoMarquee() {
           }}
         >
           <div className="flex w-max animate-marquee gap-12 whitespace-nowrap">
-            {[...logos, ...logos].map((name, i) => (
+            {[...logos, ...logos].map((item, i) => (
               <span
                 key={i}
-                className="text-lg font-semibold tracking-[0.2em] text-muted-foreground/70"
+                className="inline-flex items-center gap-2 text-lg font-semibold tracking-[0.2em] text-muted-foreground/70"
               >
-                {name}
+                {item.name}
+                {item.soon && (
+                  <span className="text-[9px] font-bold tracking-widest text-muted-foreground/40 border border-muted-foreground/20 rounded px-1.5 py-0.5">
+                    SOON
+                  </span>
+                )}
               </span>
             ))}
           </div>

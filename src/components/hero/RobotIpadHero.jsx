@@ -102,30 +102,37 @@ export default function RobotIpadHero() {
           <div className="relative opacity-60">
             <div className="ticker-track flex gap-10 whitespace-nowrap text-[11px] font-mono tracking-[0.28em] text-white/45">
               {[
-                "SHOPIFY",
-                "SHIPROCKET",
-                "DELHIVERY",
-                "ECOMEXPRESS",
-                "META ADS",
-                "GOOGLE ADS",
-                "CASHFREE",
-                "RAZORPAY",
-                "AMAZON",
+                { name: "SHOPIFY" },
+                { name: "WOOCOMMERCE", soon: true },
+                { name: "SHIPROCKET" },
+                { name: "DELHIVERY" },
+                { name: "ECOMEXPRESS" },
+                { name: "META ADS" },
+                { name: "GOOGLE ADS" },
+                { name: "CASHFREE" },
+                { name: "RAZORPAY" },
+                { name: "AMAZON" },
               ]
                 .concat([
-                  "SHOPIFY",
-                  "SHIPROCKET",
-                  "DELHIVERY",
-                  "ECOMEXPRESS",
-                  "META ADS",
-                  "GOOGLE ADS",
-                  "CASHFREE",
-                  "RAZORPAY",
-                  "AMAZON",
+                  { name: "SHOPIFY" },
+                  { name: "WOOCOMMERCE", soon: true },
+                  { name: "SHIPROCKET" },
+                  { name: "DELHIVERY" },
+                  { name: "ECOMEXPRESS" },
+                  { name: "META ADS" },
+                  { name: "GOOGLE ADS" },
+                  { name: "CASHFREE" },
+                  { name: "RAZORPAY" },
+                  { name: "AMAZON" },
                 ])
-                .map((t, i) => (
+                .map((item, i) => (
                   <span key={i} className="flex items-center gap-10">
-                    {t}
+                    {item.name}
+                    {item.soon && (
+                      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 3, padding: '1px 4px' }}>
+                        SOON
+                      </span>
+                    )}
                     <span className="h-1 w-1 rounded-full bg-white/20" />
                   </span>
                 ))}
