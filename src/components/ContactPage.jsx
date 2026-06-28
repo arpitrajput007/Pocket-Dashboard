@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Clock, MessageSquare, ArrowLeft, ArrowRight, Shield, ExternalLink } from 'lucide-react';
 import BrandLogo from './BrandLogo';
+import SocialLinks from './SocialLinks';
 
 export default function ContactPage() {
   const navigate = useNavigate();
@@ -149,6 +150,24 @@ export default function ContactPage() {
             </span>
           </div>
 
+          {/* Social Media */}
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px',
+            padding: '36px 28px', borderRadius: '20px', marginBottom: '40px',
+            background: 'rgba(255,255,255,0.015)',
+            border: '1px solid rgba(255,255,255,0.07)',
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#f8fafc', marginBottom: '6px' }}>
+                Stay connected with us
+              </div>
+              <p style={{ fontSize: '13px', color: '#64748b', lineHeight: 1.6, margin: 0 }}>
+                Follow us for product updates, tips, and announcements.
+              </p>
+            </div>
+            <SocialLinks size="md" variant="dark" />
+          </div>
+
           {/* CTA — back to product */}
           <div style={{ textAlign: 'center' }}>
             <Link to="/" style={{
@@ -182,6 +201,9 @@ export default function ContactPage() {
           <p style={{ fontSize: '13px', color: '#475569', lineHeight: 1.7, marginBottom: '16px' }}>
             Built for modern D2C brands to track profit, operations, and growth from one intelligent dashboard.
           </p>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+            <SocialLinks size="sm" variant="footer" />
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '20px', flexWrap: 'wrap' }}>
             <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: '#334155', textDecoration: 'none' }}
               onMouseEnter={e => e.currentTarget.style.color = '#94a3b8'}

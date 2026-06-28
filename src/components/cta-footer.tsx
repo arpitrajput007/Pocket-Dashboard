@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import BrandLogo from './BrandLogo';
+import SocialLinks from './SocialLinks';
 import { useEffect, useState } from "react";
 import { supabase } from "../supabaseClient";
 
@@ -70,10 +71,13 @@ export function CtaFooter() {
                 <div>We help you track what actually matters. © {new Date().getFullYear()} Pocket Dashboard.</div>
               </div>
             </div>
-            <div className="flex items-center gap-5">
-              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-foreground no-underline">Privacy</a>
-              <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-foreground no-underline">Terms</a>
-              <a href="/contact-us" target="_blank" rel="noopener noreferrer" className="hover:text-foreground no-underline">Contact</a>
+            <div className="flex flex-col items-center gap-4 sm:items-end">
+              <SocialLinks size="sm" variant="footer" />
+              <div className="flex items-center gap-5">
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-foreground no-underline">Privacy</a>
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-foreground no-underline">Terms</a>
+                <a href="/contact-us" target="_blank" rel="noopener noreferrer" className="hover:text-foreground no-underline">Contact</a>
+              </div>
             </div>
           </div>
         </footer>
