@@ -1972,6 +1972,113 @@ app.post('/api/contact', async (req, res) => {
   res.json({ success: true });
 });
 
+// ── Scale Your Business — service request submission ─────────────────────────
+app.post('/api/scale/request', async (req, res) => {
+  const {
+    store_id, service_type, business_name, contact_person, email, phone,
+    website_url, monthly_order_volume, current_gateway, has_gst_msme,
+    countries_sold_to, monthly_intl_orders, payment_receive_method,
+    monthly_meta_spend, settlement_currency, additional_notes,
+  } = req.body;
+
+  if (!service_type || !business_name || !email || !phone || !contact_person)
+    return res.status(400).json({ error: 'Missing required fields' });
+
+  const SERVICE_LABELS = {
+    domestic_pg: 'Domestic Payment Gateway',
+    international_pg: 'International Payment Gateway',
+    meta_usdt: 'Meta Ads USDT / INR Settlement',
+  };
+
+  try {
+    await supabase.from('business_service_requests').insert([{
+      store_id: store_id || null, service_type, status: 'new',
+      business_name, contact_person, email, phone,
+      website_url, monthly_order_volume, current_gateway, has_gst_msme,
+      countries_sold_to, monthly_intl_orders, payment_receive_method,
+      monthly_meta_spend, settlement_currency, additional_notes,
+    }]);
+  } catch (e) {
+    console.warn('[Scale] Supabase save skipped:', e.message);
+  }
+
+  const ct = createContactTransport();
+  if (ct) {
+    try {
+      await ct.transport.sendMail({
+        from: `"Pocket Dashboard" <${ct.from}>`,
+        to: 'dashboardpocket@gmail.com',
+        subject: `🚀 New Service Request — ${SERVICE_LABELS[service_type] || service_type} from ${business_name}`,
+        html: `
+<div style="font-family:sans-serif;max-width:540px;margin:0 auto;background:#07070e;color:#e2e8f0;border-radius:12px;overflow:hidden;border:1px solid #1e1e3a">
+  <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:18px 24px">
+    <h2 style="margin:0;color:#fff;font-size:18px">🚀 New Service Request</h2>
+    <div style="color:rgba(255,255,255,0.7);font-size:13px;margin-top:4px">${SERVICE_LABELS[service_type] || service_type}</div>
+  </div>
+  <div style="padding:24px">
+    <table style="width:100%;border-collapse:collapse;font-size:14px">
+      <tr><td style="padding:7px 0;color:#94a3b8;width:160px">Business</td><td style="color:#e2e8f0;font-weight:600">${business_name}</td></tr>
+      <tr><td style="padding:7px 0;color:#94a3b8">Contact</td><td style="color:#e2e8f0">${contact_person}</td></tr>
+      <tr><td style="padding:7px 0;color:#94a3b8">Email</td><td><a href="mailto:${email}" style="color:#22d3ee">${email}</a></td></tr>
+      <tr><td style="padding:7px 0;color:#94a3b8">Phone</td><td style="color:#e2e8f0">${phone}</td></tr>
+      ${website_url ? `<tr><td style="padding:7px 0;color:#94a3b8">Website</td><td style="color:#e2e8f0">${website_url}</td></tr>` : ''}
+      ${monthly_order_volume ? `<tr><td style="padding:7px 0;color:#94a3b8">Monthly Orders</td><td style="color:#e2e8f0">${monthly_order_volume}</td></tr>` : ''}
+      ${current_gateway ? `<tr><td style="padding:7px 0;color:#94a3b8">Current Gateway</td><td style="color:#e2e8f0">${current_gateway}</td></tr>` : ''}
+      ${has_gst_msme ? `<tr><td style="padding:7px 0;color:#94a3b8">GST / MSME</td><td style="color:#e2e8f0">${has_gst_msme}</td></tr>` : ''}
+      ${countries_sold_to ? `<tr><td style="padding:7px 0;color:#94a3b8">Countries</td><td style="color:#e2e8f0">${countries_sold_to}</td></tr>` : ''}
+      ${payment_receive_method ? `<tr><td style="padding:7px 0;color:#94a3b8">Payment Method</td><td style="color:#e2e8f0">${payment_receive_method}</td></tr>` : ''}
+      ${monthly_meta_spend ? `<tr><td style="padding:7px 0;color:#94a3b8">Meta Spend/mo</td><td style="color:#e2e8f0">${monthly_meta_spend}</td></tr>` : ''}
+      ${settlement_currency ? `<tr><td style="padding:7px 0;color:#94a3b8">Settlement</td><td style="color:#e2e8f0">${settlement_currency}</td></tr>` : ''}
+    </table>
+    ${additional_notes ? `<div style="margin-top:16px;padding:14px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);font-size:14px;line-height:1.6;color:#cbd5e1">${additional_notes}</div>` : ''}
+    <div style="margin-top:20px;font-size:12px;color:#475569">Submitted via Scale Your Business — Pocket Dashboard</div>
+  </div>
+</div>`,
+      });
+    } catch (e) {
+      console.error('[Scale] Email failed:', e.message);
+    }
+  }
+
+  res.json({ success: true });
+});
+
+// ── Admin: list + update service requests ──────────────────────────────────────
+app.get('/api/admin/scale-requests', verifyAdminToken, async (req, res) => {
+  try {
+    const { service_type, status, search } = req.query;
+    let query = supabase.from('business_service_requests').select('*').order('created_at', { ascending: false }).limit(200);
+    if (service_type) query = query.eq('service_type', service_type);
+    if (status)       query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    let rows = data || [];
+    if (search) {
+      const s = search.toLowerCase();
+      rows = rows.filter(r =>
+        r.business_name?.toLowerCase().includes(s) ||
+        r.email?.toLowerCase().includes(s) ||
+        r.contact_person?.toLowerCase().includes(s)
+      );
+    }
+    res.json({ data: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/admin/scale-requests/:id', verifyAdminToken, async (req, res) => {
+  const { id } = req.params;
+  const { status, internal_notes } = req.body;
+  const updates = {};
+  if (status         !== undefined) updates.status         = status;
+  if (internal_notes !== undefined) updates.internal_notes = internal_notes;
+  try {
+    const { data, error } = await supabase.from('business_service_requests')
+      .update(updates).eq('id', id).select().single();
+    if (error) throw new Error(error.message);
+    res.json({ data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin: list contact requests ──────────────────────────────────────────────
 app.get('/api/admin/contact-requests', verifyAdminToken, async (req, res) => {
   try {

@@ -4,7 +4,7 @@ import BrandLogo from './BrandLogo';
 import {
   LayoutDashboard, Link2, Settings, Headphones,
   LogOut, ChevronRight, Unplug, ShieldCheck, Sparkles, SlidersHorizontal, Package, DollarSign,
-  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb, Boxes, Warehouse
+  BarChart, Calendar, TrendingUp, PieChart, List, RefreshCw, Wallet, Megaphone, Lightbulb, Boxes, Warehouse, Zap
 } from 'lucide-react';
 
 // Lazy load dashboard sub-views for performance
@@ -23,6 +23,7 @@ const MoneyInMyPocket = lazy(() => import('./MoneyInMyPocket'));
 const AdsIntegration = lazy(() => import('./AdsIntegration'));
 const InventoryView  = lazy(() => import('./InventoryView'));
 const WarehouseView  = lazy(() => import('./WarehouseView'));
+const ScaleView      = lazy(() => import('./ScaleView'));
 
 const ViewLoading = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '400px', color: 'rgba(255,255,255,0.2)', fontSize: '14px' }}>
@@ -859,6 +860,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
     sheet: 'Sheet View',
     inventory: 'Inventory Management',
     warehouse: 'Warehouse Inventory',
+    scale: 'Scale Your Business',
     connect: 'Connect your Store',
     products: 'Products',
     pricing: 'Pricing Management',
@@ -1039,6 +1041,7 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
             <NavItem icon={DollarSign} label="Pricing" active={activeTab === 'pricing'} onClick={() => { setActiveTab('pricing'); setMobileSidebarOpen(false); }} tabKey="pricing" />
             <NavItem icon={Link2} label="Connect your Store" active={activeTab === 'connect'} onClick={() => { setActiveTab('connect'); setMobileSidebarOpen(false); }} badge={isConnected ? null : 'Setup'} tabKey="connect" />
             <NavItem icon={Megaphone} label="Ad Accounts" active={activeTab === 'ads'} onClick={() => { setActiveTab('ads'); setMobileSidebarOpen(false); }} tabKey="ads" />
+            <NavItem icon={Zap} label="Scale Your Business" active={activeTab === 'scale'} onClick={() => { setActiveTab('scale'); setMobileSidebarOpen(false); }} tabKey="scale" />
 
             <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '10px 4px' }} />
             <div style={{ fontSize: '9.5px', fontWeight: 700, color: 'rgba(255,255,255,0.2)', letterSpacing: '1.2px', textTransform: 'uppercase', padding: '4px 10px 6px' }}>
@@ -1188,12 +1191,13 @@ export default function PersonalPanel({ session, store, onStoreConnected }) {
                   {activeTab === 'products'  && isConnected && store?.subscription_plan !== 'starter' && <ProductsView store={store} refreshTrigger={refreshTrigger} />}
                   {activeTab === 'inventory' && isConnected && store?.subscription_plan !== 'starter' && <InventoryView store={store} />}
                   {activeTab === 'warehouse' && isConnected && store?.subscription_plan !== 'starter' && <WarehouseView store={store} />}
+                  {activeTab === 'scale'     && isConnected && <ScaleView store={store} />}
                   {activeTab === 'advanced'  && isConnected && store?.subscription_plan !== 'starter' && <AdvancedSettings store={store} />}
                   {activeTab === 'ads' && isConnected && (
                     <AdsIntegration store={store} onConfigured={() => { if (onStoreConnected) onStoreConnected(); setRefreshTrigger(prev => prev + 1); }} />
                   )}
 
-                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'inventory', 'warehouse', 'advanced', 'ads'].includes(activeTab) && !isConnected && (
+                  {['weekly', 'monthly', 'all-time', 'analytics', 'money', 'sheet', 'products', 'inventory', 'warehouse', 'advanced', 'ads', 'scale'].includes(activeTab) && !isConnected && (
                     <NoStoreState onConnectClick={() => setActiveTab('connect')} />
                   )}
                   {activeTab === 'connect' && (

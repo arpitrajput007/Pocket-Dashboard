@@ -15,8 +15,9 @@ const AdminIntegrations  = lazy(() => import('./AdminIntegrations'));
 const AdminSupport       = lazy(() => import('./AdminSupport'));
 const AdminRequests      = lazy(() => import('./AdminRequests'));
 const AdminMarketing     = lazy(() => import('./AdminMarketing'));
-const AdminNotifications = lazy(() => import('./AdminNotifications'));
-const AdminSettings      = lazy(() => import('./AdminSettings'));
+const AdminNotifications    = lazy(() => import('./AdminNotifications'));
+const AdminSettings         = lazy(() => import('./AdminSettings'));
+const AdminServiceRequests  = lazy(() => import('./AdminServiceRequests'));
 
 const NAV_SECTIONS = [
   { id: 'dashboard',     label: 'Overview',        icon: LayoutDashboard, badge: null,  group: 'main' },
@@ -28,6 +29,7 @@ const NAV_SECTIONS = [
   { id: 'integrations',  label: 'Integrations',     icon: Plug,            badge: null,  group: 'ops' },
   { id: 'support',       label: 'Support',          icon: Headphones,      badge: null,  group: 'ops' },
   { id: 'requests',      label: 'Custom Requests',  icon: Inbox,           badge: null,  group: 'ops' },
+  { id: 'scale',         label: 'Service Requests', icon: Zap,             badge: null,  group: 'ops' },
   { id: 'marketing',     label: 'Marketing',        icon: BarChart2,       badge: null,  group: 'growth' },
   { id: 'notifications', label: 'Notifications',    icon: Bell,            badge: null,  group: 'growth' },
   { id: 'settings',      label: 'Settings',         icon: Settings,        badge: null,  group: 'system' },
@@ -51,6 +53,7 @@ const SECTION_MAP = {
   integrations:  AdminIntegrations,
   support:       AdminSupport,
   requests:      AdminRequests,
+  scale:         AdminServiceRequests,
   marketing:     AdminMarketing,
   notifications: AdminNotifications,
   settings:      AdminSettings,
